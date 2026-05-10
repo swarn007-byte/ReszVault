@@ -1,0 +1,32 @@
+{
+  "rewrites": [
+    {
+      "source": "/api/auth/(.*)",
+      "destination": "https://reszvault.onrender.com/api/auth/$1"
+    },
+    {
+      "source": "/books/:path*",
+      "destination": "https://reszvault.onrender.com/books/:path*"
+    },
+    {
+      "source": "/books",
+      "destination": "https://reszvault.onrender.com/books"
+    },
+    {
+      "source": "/chat/stream",
+      "destination": "https://reszvault.onrender.com/chat/stream"
+    },
+    {
+      "source": "/chat",
+      "destination": "https://reszvault.onrender.com/chat"
+    },
+    {
+      "source": "/health",
+      "destination": "https://reszvault.onrender.com/health"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ]
+}
