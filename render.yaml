@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: reszvault
+    runtime: node
+    rootDir: backend
+    plan: free
+    buildCommand: bun install && bunx prisma generate
+    startCommand: bun index.ts
+    healthCheckPath: /health
+    envVars:
+      - key: FRONTEND_ORIGIN
+        value: https://reszvault.vercel.app
+      - key: GROQ_MODEL
+        value: llama-3.1-8b-instant
