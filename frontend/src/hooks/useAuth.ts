@@ -10,14 +10,7 @@ export function useAuth() {
   const authSession = data?.session ?? null;
 
   const logout = async () => {
-    await signOut({
-      fetchOptions: {
-        credentials: "include",
-        onSuccess: () => {
-          navigate("/", { replace: true });
-        },
-      },
-    });
+    await signOut();
     await refetch();
     navigate("/", { replace: true });
   };
