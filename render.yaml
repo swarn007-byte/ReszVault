@@ -1,11 +1,11 @@
 services:
   - type: web
     name: reszvault
-    runtime: node
+    runtime: python
     rootDir: backend
     plan: free
-    buildCommand: bun install && bunx prisma generate
-    startCommand: bun index.ts
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
     envVars:
       - key: FRONTEND_ORIGIN
