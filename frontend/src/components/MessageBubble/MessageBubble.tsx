@@ -16,20 +16,19 @@ export function MessageBubble({ message, isStreaming }: Props) {
       className={`flex w-full gap-3 ${isUser ? "justify-end" : "justify-start"}`}
     >
       {!isUser && (
-        <div className="mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#c87c5a] text-[10px] font-bold uppercase text-[#181818] shadow-sm">
-          RV
-        </div>
+        <img
+          src="/github-avatar.png"
+          alt=""
+          className="mt-1 h-8 w-8 shrink-0 rounded-full object-cover"
+        />
       )}
       {isUser ? (
-        <div className="max-w-[86%] rounded-2xl rounded-tr-sm bg-[#c87c5a] px-4 py-3 text-sm leading-relaxed text-[#181818] shadow-sm md:max-w-[76%]">
+        <div className="min-w-0 max-w-[86%] overflow-hidden break-words rounded-[18px] bg-[#e9ecf1] px-4 py-3 text-[15px] leading-relaxed text-[#242731] md:max-w-[70%]">
           {message.content}
         </div>
       ) : message.content ? (
-        <div className="max-w-[92%] rounded-2xl rounded-tl-sm border border-white/[0.08] bg-[#202020] px-5 py-4 text-sm leading-relaxed text-[#e8e6e1] shadow-sm md:max-w-[84%]">
-          <div className="mb-3 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#8f8b84]">
-            <span className="h-1.5 w-1.5 rounded-full bg-[#75d083]" />
-            ReszVault answer
-          </div>
+        <div className="min-w-0 max-w-full overflow-hidden break-words px-1 py-1 text-[15px] leading-7 text-[#242731] md:max-w-[88%]">
+          <p className="mb-2 text-base font-semibold text-[#1f222a]">ReszVault</p>
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}
             components={{
@@ -41,7 +40,7 @@ export function MessageBubble({ message, isStreaming }: Props) {
                 <ol className="mb-3 list-decimal pl-5">{children}</ol>
               ),
               strong: ({ children }) => (
-                <strong className="font-semibold text-[#e8e6e1]">
+                <strong className="font-semibold text-[#20232b]">
                   {children}
                 </strong>
               ),
@@ -53,7 +52,7 @@ export function MessageBubble({ message, isStreaming }: Props) {
                   );
                 return (
                   <code
-                    className="rounded bg-[#2a2a2a] px-1.5 py-0.5 font-mono text-[12px] text-[#c87c5a]"
+                    className="rounded bg-[#e9ecf1] px-1.5 py-0.5 font-mono text-[12px] text-[#d86f1c]"
                     {...props}
                   >
                     {children}
@@ -66,21 +65,20 @@ export function MessageBubble({ message, isStreaming }: Props) {
             {message.content}
           </ReactMarkdown>
           {isStreaming && (
-            <span className="ml-1 inline-block h-4 w-0.5 animate-pulse bg-[#c87c5a] align-middle" />
+            <span className="ml-1 inline-block h-4 w-0.5 animate-pulse bg-[#e8791a] align-middle" />
           )}
         </div>
       ) : isStreaming ? (
-        <div className="flex items-center gap-2 rounded-2xl border border-white/[0.08] bg-[#202020] px-5 py-4 shadow-sm">
+        <div className="flex items-center gap-2 rounded-2xl px-1 py-4">
           <span className="flex gap-1">
             {[0, 1, 2].map((i) => (
               <span
                 key={i}
-                className="h-2 w-2 animate-bounce rounded-full bg-[#c87c5a]/60"
+                className="h-2 w-2 animate-bounce rounded-full bg-[#e8791a]/60"
                 style={{ animationDelay: `${i * 0.15}s` }}
               />
             ))}
           </span>
-          <span className="text-xs text-[#7a7875]">Thinking...</span>
         </div>
       ) : null}
     </motion.div>
@@ -95,15 +93,15 @@ function CodeBlock({ code }: { code: string }) {
     setTimeout(() => setCopied(false), 2000);
   };
   return (
-    <div className="group relative my-3 overflow-hidden rounded-xl border border-[rgba(255, 255, 255, 0.08)] bg-[#2a2a2a]">
+    <div className="group relative my-3 overflow-hidden rounded-xl border border-[#dfe2e7] bg-white">
       <button
         type="button"
         onClick={copy}
-        className="absolute right-2 top-2 rounded-md bg-[#222222]/80 px-2 py-1 text-[10px] font-medium text-[#7a7875] opacity-0 transition-opacity group-hover:opacity-100"
+        className="absolute right-2 top-2 rounded-md bg-[#f1f3f6] px-2 py-1 text-[10px] font-medium text-[#6e737d] opacity-0 transition-opacity group-hover:opacity-100"
       >
         {copied ? "Copied!" : "Copy"}
       </button>
-      <pre className="overflow-x-auto p-4 text-[13px] leading-relaxed text-[#e8e6e1]">
+      <pre className="overflow-x-auto p-4 text-[13px] leading-relaxed text-[#242731]">
         <code>{code}</code>
       </pre>
     </div>
