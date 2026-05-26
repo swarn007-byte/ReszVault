@@ -1,4 +1,5 @@
 import { getApiBase } from "../lib/api-base";
+import { getGuestId } from "../lib/guest-id";
 
 export type BookRecord = {
   id: string;
@@ -14,6 +15,10 @@ async function booksFetch(path: string, init?: RequestInit) {
   const res = await fetch(`${getApiBase()}${path}`, {
     ...init,
     credentials: "include",
+    headers: {
+      "x-guest-id": getGuestId(),
+      ...(init?.headers ?? {}),
+    },
   });
   const body = (await res.json().catch(() => ({}))) as {
     error?: string;

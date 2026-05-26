@@ -1,5 +1,6 @@
 import { api } from "./client";
 import { getApiBase } from "../lib/api-base";
+import { getGuestId } from "../lib/guest-id";
 
 export type ChatApiResponse = {
   success: boolean;
@@ -40,7 +41,7 @@ function toFriendlyChatError(message?: string): string {
     normalized.includes("tenant/user") ||
     normalized.includes("database")
   ) {
-    return "The vault index is not reachable right now. Check the database connection, then try again.";
+    return "I could not reach a source for this chat. Upload a PDF or choose an indexed project source.";
   }
   if (normalized.includes("failed to fetch") || normalized.includes("network")) {
     return "The chat service is not reachable right now. Please check the server and try again.";
@@ -52,10 +53,12 @@ function toFriendlyChatError(message?: string): string {
 export async function sendQuestion(
   question: string,
   bookId?: string | null,
+  bookIds?: string[],
 ): Promise<ChatApiResponse> {
   const { data } = await api.post<ChatApiResponse>("/chat", {
     question,
     ...(bookId ? { bookId } : {}),
+    ...(bookIds?.length ? { bookIds } : {}),
   });
   return data;
 }
@@ -66,14 +69,18 @@ export async function sendQuestion(
 export async function streamQuestion(
   question: string,
   callbacks: StreamCallbacks,
-  options?: { bookId?: string | null; signal?: AbortSignal },
+  options?: { bookId?: string | null; bookIds?: string[]; signal?: AbortSignal },
 ): Promise<void> {
-  const { bookId, signal } = options ?? {};
+  const { bookId, bookIds, signal } = options ?? {};
   const res = await fetch(`${getApiBase()}/chat/stream`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "x-guest-id": getGuestId() },
     credentials: "include",
-    body: JSON.stringify({ question, ...(bookId ? { bookId } : {}) }),
+    body: JSON.stringify({
+      question,
+      ...(bookId ? { bookId } : {}),
+      ...(bookIds?.length ? { bookIds } : {}),
+    }),
     signal,
   });
 

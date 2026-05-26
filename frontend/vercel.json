@@ -5,6 +5,10 @@
       "destination": "https://reszvault.onrender.com/api/auth/$1"
     },
     {
+      "source": "/auth/providers",
+      "destination": "https://reszvault.onrender.com/auth/providers"
+    },
+    {
       "source": "/books/:path*",
       "destination": "https://reszvault.onrender.com/books/:path*"
     },
