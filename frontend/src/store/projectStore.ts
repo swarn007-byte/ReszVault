@@ -5,6 +5,8 @@ export type VaultProject = {
   id: string;
   name: string;
   description: string;
+  sourceCount: number;
+  graphNodes: number;
   createdAt: string;
   updatedAt: string;
 };
@@ -23,6 +25,8 @@ const starterProjects: VaultProject[] = [
     id: "default-research-vault",
     name: "Research Vault",
     description: "A general workspace for uploaded PDFs, summaries, and source-grounded chat.",
+    sourceCount: 0,
+    graphNodes: 0,
     createdAt: new Date(0).toISOString(),
     updatedAt: new Date(0).toISOString(),
   },
@@ -43,6 +47,8 @@ export const useProjectStore = create<ProjectState>()(
           description:
             description?.trim() ||
             "A focused notebook for documents, questions, and grounded answers.",
+          sourceCount: 0,
+          graphNodes: 0,
           createdAt: now,
           updatedAt: now,
         };
@@ -63,6 +69,19 @@ export const useProjectStore = create<ProjectState>()(
     }),
     {
       name: "reszvault-projects",
+      version: 1,
+      migrate: (persisted) => {
+        const state = persisted as Partial<ProjectState> | undefined;
+        if (!state?.projects) return persisted;
+        return {
+          ...state,
+          projects: state.projects.map((project) => ({
+            ...project,
+            sourceCount: project.sourceCount ?? 0,
+            graphNodes: project.graphNodes ?? 0,
+          })),
+        };
+      },
     },
   ),
 );

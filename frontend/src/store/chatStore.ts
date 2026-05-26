@@ -37,7 +37,29 @@ type ChatState = {
 function generateTitle(text: string): string {
   const trimmed = text.trim();
   if (!trimmed) return "New chat";
-  return trimmed.length > 42 ? `${trimmed.slice(0, 42)}…` : trimmed;
+  if (/summarize (all )?project sources|summarize the active source/i.test(trimmed)) return "Project summary";
+  if (/most important points|key points/i.test(trimmed)) return "Key points";
+  if (/clean study notes|make notes/i.test(trimmed)) return "Study notes";
+  return trimmed.length > 32 ? `${trimmed.slice(0, 32)}…` : trimmed;
+}
+
+function isBrokenIndexMessage(message: Message) {
+  return /vault index is not reachable|check the database connection/i.test(message.content);
+}
+
+function cleanPersistedChats(chats: Chat[] = []) {
+  return chats
+    .filter((chat) => !chat.messages.some(isBrokenIndexMessage))
+    .map((chat) => {
+      const messages = chat.messages.filter((message) => !isBrokenIndexMessage(message));
+      const firstUser = messages.find((message) => message.role === "user");
+      return {
+        ...chat,
+        title: firstUser ? generateTitle(firstUser.content) : chat.title,
+        messages,
+      };
+    })
+    .filter((chat) => chat.messages.length > 0);
 }
 
 export const useChatStore = create<ChatState>()(
@@ -133,8 +155,18 @@ export const useChatStore = create<ChatState>()(
     }),
     {
       name: "reszvault-chats",
+      version: 2,
+      migrate: (persisted) => {
+        const state = persisted as Partial<ChatState> | undefined;
+        if (!state) return persisted;
+        const chats = cleanPersistedChats(state.chats);
+        const activeChatId = chats.some((chat) => chat.id === state.activeChatId)
+          ? state.activeChatId
+          : (chats[0]?.id ?? null);
+        return { ...state, chats, activeChatId };
+      },
       partialize: (state) => ({
-        chats: state.chats,
+        chats: cleanPersistedChats(state.chats),
         activeChatId: state.activeChatId,
       }),
       onRehydrateStorage: () => (state) => {

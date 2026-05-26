@@ -3,20 +3,23 @@ import { persist } from "zustand/middleware";
 import type { BookRecord } from "../api/books";
 import { deleteBook, listBooks, uploadBook } from "../api/books";
 
-/** null = whole ReszVault workspace */
+/** default = whole project / all ready sources */
 export type SelectedBook = { kind: "default" } | { kind: "user"; id: string };
 
 type BookState = {
   books: BookRecord[];
+  projectBookIds: Record<string, string[]>;
   selected: SelectedBook;
   loading: boolean;
   uploading: boolean;
   error: string | null;
   setSelected: (selected: SelectedBook) => void;
-  fetchBooks: () => Promise<void>;
-  uploadPdf: (file: File, title?: string) => Promise<BookRecord>;
-  removeBook: (id: string) => Promise<void>;
+  fetchBooks: (projectId?: string | null) => Promise<void>;
+  uploadPdf: (file: File, title?: string, projectId?: string | null) => Promise<BookRecord>;
+  removeBook: (id: string, projectId?: string | null) => Promise<void>;
+  projectBooks: (projectId?: string | null) => BookRecord[];
   selectedBookId: () => string | null;
+  selectedBookIds: (projectId?: string | null) => string[];
   selectedLabel: () => string;
 };
 
@@ -24,6 +27,7 @@ export const useBookStore = create<BookState>()(
   persist(
     (set, get) => ({
       books: [],
+      projectBookIds: {},
       selected: { kind: "default" },
       loading: false,
       uploading: false,
@@ -36,21 +40,54 @@ export const useBookStore = create<BookState>()(
         return selected.kind === "user" ? selected.id : null;
       },
 
+      projectBooks: (projectId) => {
+        const { books, projectBookIds } = get();
+        if (!projectId) return books;
+        const ids = projectBookIds[projectId];
+        const hasAnyProjectMap = Object.values(projectBookIds).some((bookIds) => bookIds.length > 0);
+        if (!ids && !hasAnyProjectMap) return books;
+        if (!ids) return [];
+        const idSet = new Set(ids);
+        return books.filter((book) => idSet.has(book.id));
+      },
+
+      selectedBookIds: (projectId) => {
+        const { selected } = get();
+        if (selected.kind === "user") return [selected.id];
+        return get()
+          .projectBooks(projectId)
+          .filter((book) => book.status === "ready")
+          .map((book) => book.id);
+      },
+
       selectedLabel: () => {
         const { selected, books } = get();
-        if (selected.kind === "default") return "ReszVault";
+        if (selected.kind === "default") {
+          const readyCount = books.filter((book) => book.status === "ready").length;
+          return readyCount > 0 ? `${readyCount} project sources` : "ReszVault";
+        }
         return books.find((b) => b.id === selected.id)?.title ?? "My book";
       },
 
-      fetchBooks: async () => {
+      fetchBooks: async (projectId) => {
         set({ loading: true, error: null });
         try {
           const books = await listBooks();
-          const { selected } = get();
+          const { selected, projectBookIds } = get();
+          const liveIds = new Set(books.map((book) => book.id));
+          const currentProjectIds = projectId ? projectBookIds[projectId] : undefined;
+          const currentProjectHasLiveBooks = Boolean(
+            currentProjectIds?.some((bookId) => liveIds.has(bookId)),
+          );
+          const hasAnyProjectMap = Object.values(projectBookIds).some((bookIds) => bookIds.length > 0);
+          const nextProjectBookIds =
+            projectId && books.length > 0 && (!hasAnyProjectMap || (currentProjectIds && !currentProjectHasLiveBooks))
+              ? { ...projectBookIds, [projectId]: books.map((book) => book.id) }
+              : projectBookIds;
           if (selected.kind === "user" && !books.some((b) => b.id === selected.id)) {
-            set({ books, selected: { kind: "default" } });
+            set({ books, projectBookIds: nextProjectBookIds, selected: { kind: "default" } });
           } else {
-            set({ books });
+            set({ books, projectBookIds: nextProjectBookIds });
           }
         } catch (err) {
           const message = err instanceof Error ? err.message : "Could not load books";
@@ -67,13 +104,22 @@ export const useBookStore = create<BookState>()(
         }
       },
 
-      uploadPdf: async (file, title) => {
+      uploadPdf: async (file, title, projectId) => {
         set({ uploading: true, error: null });
         try {
           const book = await uploadBook(file, title);
           set((state) => ({
             books: [book, ...state.books.filter((b) => b.id !== book.id)],
-            selected: { kind: "user", id: book.id },
+            projectBookIds: projectId
+              ? {
+                  ...state.projectBookIds,
+                  [projectId]: [
+                    book.id,
+                    ...(state.projectBookIds[projectId] ?? []).filter((id) => id !== book.id),
+                  ],
+                }
+              : state.projectBookIds,
+            selected: { kind: "default" },
             uploading: book.status === "processing",
           }));
 
@@ -84,7 +130,18 @@ export const useBookStore = create<BookState>()(
               const books = await listBooks();
               const updated = books.find((b) => b.id === book.id);
               if (!updated) throw new Error("Upload lost — try again.");
-              set({ books });
+              set((state) => ({
+                books,
+                projectBookIds: projectId
+                  ? {
+                      ...state.projectBookIds,
+                      [projectId]: [
+                        book.id,
+                        ...(state.projectBookIds[projectId] ?? []).filter((id) => id !== book.id),
+                      ],
+                    }
+                  : state.projectBookIds,
+              }));
               if (updated.status === "processing") return poll(attempts + 1);
               if (updated.status === "failed") {
                 throw new Error(updated.error ?? "PDF indexing failed.");
@@ -105,18 +162,35 @@ export const useBookStore = create<BookState>()(
         }
       },
 
-      removeBook: async (id) => {
+      removeBook: async (id, projectId) => {
         await deleteBook(id);
         const { selected } = get();
         set((state) => ({
           books: state.books.filter((b) => b.id !== id),
+          projectBookIds: Object.fromEntries(
+            Object.entries(state.projectBookIds).map(([key, ids]) => [
+              key,
+              key === projectId || !projectId ? ids.filter((bookId) => bookId !== id) : ids,
+            ]),
+          ),
           selected: selected.kind === "user" && selected.id === id ? { kind: "default" } : selected,
         }));
       },
     }),
     {
       name: "reszvault-books",
-      partialize: (state) => ({ selected: state.selected }),
+      version: 2,
+      partialize: (state) => ({
+        selected: state.selected,
+        projectBookIds: state.projectBookIds,
+      }),
+      migrate: (persisted) => {
+        const state = persisted as Partial<BookState> | undefined;
+        return {
+          selected: state?.selected ?? { kind: "default" },
+          projectBookIds: state?.projectBookIds ?? {},
+        };
+      },
     },
   ),
 );
