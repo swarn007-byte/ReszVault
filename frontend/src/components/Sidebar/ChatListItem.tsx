@@ -20,17 +20,17 @@ export function ChatListItem({ chat, isActive, onSelect, onDelete }: Props) {
       onKeyDown={(e) => e.key === "Enter" && onSelect()}
       className={`group flex w-full cursor-pointer items-center gap-2 rounded-lg px-3 py-2.5 text-left transition-colors ${
         isActive
-          ? "border border-[#c87c5a]/20 bg-[#2a2a2a]"
-          : "border border-transparent hover:bg-[#2a2a2a]"
+          ? "bg-[#f1f3f6]"
+          : "hover:bg-[#f7f8fa]"
       }`}
     >
       <div className="min-w-0 flex-1">
         <p
-          className={`truncate text-sm font-medium ${isActive ? "text-[#c87c5a]" : "text-[#e8e6e1]"}`}
+          className={`truncate text-sm font-medium ${isActive ? "text-[#242731]" : "text-[#4d535f]"}`}
         >
           {chat.title}
         </p>
-        <p className="mt-0.5 text-[10px] text-[#7a7875]">{time}</p>
+        <p className="mt-0.5 text-[10px] text-[#8b909a]">{time}</p>
       </div>
       <button
         type="button"
@@ -38,7 +38,7 @@ export function ChatListItem({ chat, isActive, onSelect, onDelete }: Props) {
           e.stopPropagation();
           onDelete();
         }}
-        className="shrink-0 rounded p-1 text-[#7a7875] opacity-0 transition-opacity hover:text-red-500 group-hover:opacity-100"
+        className="shrink-0 rounded p-1 text-[#8b909a] opacity-0 transition-opacity hover:text-red-500 group-hover:opacity-100"
         aria-label="Delete chat"
       >
         <svg

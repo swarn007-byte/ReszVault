@@ -1,14 +1,33 @@
-import { useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { Sidebar } from "../Sidebar/Sidebar";
 import { useChatStore } from "../../store/chatStore";
 import { EmptyState } from "../EmptyState/EmptyState";
 import { ChatWindow } from "../ChatWindow/ChatWindow";
 import { streamQuestion } from "../../api/chat";
 import { useBookStore } from "../../store/bookStore";
-import { useAuth } from "../../hooks/useAuth";
 import { useProjectStore } from "../../store/projectStore";
+
+function slugify(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)/g, "")
+    .slice(0, 64) || "reszvault";
+}
+
+function downloadMarkdown(filename: string, content: string) {
+  const blob = new Blob([content], { type: "text/markdown;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
 
 export function AppShell() {
   const navigate = useNavigate();
@@ -29,10 +48,26 @@ export function AppShell() {
     setMessageContent,
     getChat,
   } = useChatStore();
-  const selectedBookId = useBookStore((s) => s.selectedBookId());
-  const selectedLabel = useBookStore((s) => s.selectedLabel());
-  const { user } = useAuth();
   const activeProject = useProjectStore((s) => s.activeProject());
+  const activeProjectId = useProjectStore((s) => s.activeProjectId);
+  const books = useBookStore((s) => s.books);
+  const projectBookIds = useBookStore((s) => s.projectBookIds);
+  const fetchBooks = useBookStore((s) => s.fetchBooks);
+  const [connectState, setConnectState] = useState<"idle" | "done">("idle");
+  const scopedBooks = useMemo(() => {
+    if (!activeProjectId) return books;
+    const ids = projectBookIds[activeProjectId];
+    const hasAnyProjectMap = Object.values(projectBookIds).some((bookIds) => bookIds.length > 0);
+    if (!ids && !hasAnyProjectMap) return books;
+    if (!ids) return [];
+    const idSet = new Set(ids);
+    return books.filter((book) => idSet.has(book.id));
+  }, [activeProjectId, books, projectBookIds]);
+  const selectedBookIds = useMemo(() => {
+    return scopedBooks
+      .filter((book) => book.status === "ready")
+      .map((book) => book.id);
+  }, [scopedBooks]);
   const isGuestRoute = location.pathname.startsWith("/guest");
   const chatBasePath = isGuestRoute ? "/guest" : "/app";
 
@@ -41,6 +76,10 @@ export function AppShell() {
     const t = setTimeout(() => setHistoryLoading(false), 400);
     return () => clearTimeout(t);
   }, [setHistoryLoading, setSidebarOpen]);
+
+  useEffect(() => {
+    void fetchBooks(activeProjectId);
+  }, [activeProjectId, fetchBooks]);
 
   useEffect(() => {
     if (id) {
@@ -54,6 +93,59 @@ export function AppShell() {
   const activeChat = activeChatId ? getChat(activeChatId) : undefined;
   const showEmpty = !activeChat || activeChat.messages.length === 0;
 
+  const handleConnectVault = () => {
+    const readyBooks = scopedBooks.filter((book) => book.status === "ready");
+    const projectName = activeProject?.name ?? "Research Vault";
+    const chatMessages = activeChat?.messages ?? [];
+    const markdown = [
+      "---",
+      "source: reszvault",
+      `project: ${projectName}`,
+      `exported: ${new Date().toISOString()}`,
+      "---",
+      "",
+      `# ${projectName}`,
+      "",
+      "## Sources",
+      readyBooks.length
+        ? readyBooks
+            .map((book) => `- [[${book.title}]] - ${book.chunkCount} indexed chunks`)
+            .join("\n")
+        : "- No PDFs uploaded yet.",
+      "",
+      "## Source Graph",
+      readyBooks.length
+        ? readyBooks
+            .map((book) => `- [[${projectName}]] -> [[${book.title}]]`)
+            .join("\n")
+        : "- Upload PDFs to build the project graph.",
+      "",
+      "## Current Chat",
+      chatMessages.length
+        ? chatMessages
+            .map((message) => {
+              const speaker = message.role === "user" ? "User" : "ReszVault";
+              return `### ${speaker}\n\n${message.content || "_Streaming..._"}`;
+            })
+            .join("\n\n")
+        : "_No chat messages yet._",
+      "",
+    ].join("\n");
+
+    const filename = `${slugify(projectName)}-reszvault.md`;
+    downloadMarkdown(filename, markdown);
+
+    const obsidianUrl = `obsidian://new?name=${encodeURIComponent(
+      filename.replace(/\.md$/i, ""),
+    )}&content=${encodeURIComponent(markdown.slice(0, 14000))}`;
+    window.setTimeout(() => {
+      window.location.href = obsidianUrl;
+    }, 80);
+
+    setConnectState("done");
+    window.setTimeout(() => setConnectState("idle"), 2200);
+  };
+
   const handleSend = async (text: string) => {
     let chatId = activeChatId;
     if (!chatId) {
@@ -62,6 +154,16 @@ export function AppShell() {
     }
     addMessage(chatId, { role: "user", content: text });
     const assistantId = addMessage(chatId, { role: "assistant", content: "" });
+
+    if (selectedBookIds.length === 0) {
+      setMessageContent(
+        chatId,
+        assistantId,
+        "Upload one or more PDFs first, then I can answer from your sources.",
+      );
+      return;
+    }
+
     setIsSending(true);
 
     let pending = "";
@@ -94,7 +196,7 @@ export function AppShell() {
             throw new Error(message);
           },
         },
-        { bookId: selectedBookId },
+        { bookIds: selectedBookIds },
       );
       if (rafId !== null) cancelAnimationFrame(rafId);
       flush();
@@ -102,10 +204,14 @@ export function AppShell() {
       if (rafId !== null) cancelAnimationFrame(rafId);
       const message =
         err instanceof Error ? err.message : "Something went wrong.";
+      const friendlyMessage =
+        /database connection|vault index|No book context|Sources not found/i.test(message)
+          ? "I could not reach a source for this chat. Upload a PDF or choose an indexed project source."
+          : message;
       setMessageContent(
         chatId,
         assistantId,
-        `Sorry, ${message}`,
+        friendlyMessage,
       );
     } finally {
       setIsSending(false);
@@ -113,46 +219,47 @@ export function AppShell() {
   };
 
   return (
-    <div className="flex h-[100dvh] overflow-hidden bg-[#171717] text-[#e8e6e1]">
-      {/* Desktop sidebar */}
-      <div className="hidden md:flex">
-        <Sidebar activeChatId={activeChatId} />
-      </div>
+    <div className="rv-chat-shell h-[100dvh] overflow-hidden bg-[#dfe3e9] p-0 text-[#242731]">
+      <div className="mx-auto flex h-full w-full overflow-hidden bg-[#f7f8fa]">
+        {/* Desktop sidebar */}
+        <div className="hidden md:flex">
+          <Sidebar activeChatId={activeChatId} />
+        </div>
 
-      {/* Mobile overlay */}
-      <AnimatePresence>
-        {sidebarOpen && (
-          <>
-            <motion.div
-              className="fixed inset-0 z-40 bg-black/30 md:hidden"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setSidebarOpen(false)}
-            />
-            <motion.div
-              className="fixed inset-y-0 left-0 z-50 md:hidden"
-              initial={{ x: -260 }}
-              animate={{ x: 0 }}
-              exit={{ x: -260 }}
-              transition={{ duration: 0.2, ease: "easeOut" }}
-            >
-              <Sidebar
-                activeChatId={activeChatId}
-                onCloseMobile={() => setSidebarOpen(false)}
+        {/* Mobile overlay */}
+        <AnimatePresence>
+          {sidebarOpen && (
+            <>
+              <motion.div
+                className="fixed inset-0 z-40 bg-black/20 backdrop-blur-sm md:hidden"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                onClick={() => setSidebarOpen(false)}
               />
-            </motion.div>
-          </>
-        )}
-      </AnimatePresence>
+              <motion.div
+                className="fixed inset-y-0 left-0 z-50 md:hidden"
+                initial={{ x: -300 }}
+                animate={{ x: 0 }}
+                exit={{ x: -300 }}
+                transition={{ duration: 0.2, ease: "easeOut" }}
+              >
+                <Sidebar
+                  activeChatId={activeChatId}
+                  onCloseMobile={() => setSidebarOpen(false)}
+                />
+              </motion.div>
+            </>
+          )}
+        </AnimatePresence>
 
-      {/* Main */}
-      <main className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <header className="flex min-h-16 shrink-0 items-center gap-3 border-b border-white/[0.08] bg-[#101114]/95 px-4 backdrop-blur md:px-6">
+        {/* Main */}
+        <main className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <header className="flex min-h-[92px] shrink-0 items-center gap-4 border-b border-[#eceef2] bg-white px-5 md:px-9">
           <button
             type="button"
             onClick={() => setSidebarOpen(true)}
-            className="rounded-lg p-2 text-[#9a9790] hover:bg-[#2a2a2a] md:hidden"
+            className="rounded-lg p-2 text-[#6f7480] hover:bg-[#f1f3f6] md:hidden"
             aria-label="Open menu"
           >
             <svg
@@ -166,125 +273,59 @@ export function AppShell() {
               <path d="M3 6h18M3 12h18M3 18h18" />
             </svg>
           </button>
-          <div className="min-w-0">
+          <img
+            src="/github-avatar.png"
+            alt=""
+            className="h-11 w-11 shrink-0 rounded-full object-cover shadow-sm"
+          />
+          <div className="min-w-0 flex-1">
             <div className="flex min-w-0 items-center gap-2">
-              <span className="hidden h-2 w-2 shrink-0 rounded-full bg-[#75d083] shadow-[0_0_12px_rgba(117,208,131,0.8)] sm:inline-block" />
-              <p className="truncate text-sm font-semibold text-[#f1efe9]">
-              {activeChat?.title && activeChat.title !== "New chat"
-                ? activeChat.title
-                : "ReszVault chat"}
+              <p className="truncate text-lg font-semibold tracking-[-0.01em] text-[#1f222a]">
+                {activeChat?.title && activeChat.title !== "New chat"
+                  ? activeChat.title
+                  : "ReszVault"}
               </p>
             </div>
-            <div className="mt-1 flex min-w-0 items-center gap-2 text-[11px] text-[#9a9790]">
-              <span className="truncate">{activeProject?.name ?? "Project"}</span>
-              <span className="text-[#5f5c57]">/</span>
-              <span className="truncate">Source: {selectedLabel}</span>
-            </div>
+            <p className="mt-0.5 truncate text-sm text-[#6e737d]">
+              Source-grounded workspace
+            </p>
           </div>
           <div className="ml-auto flex items-center gap-2">
-            <span className="hidden rounded-full border border-white/[0.08] bg-[#17181c] px-3 py-1.5 text-[11px] font-medium text-[#b8b4aa] sm:inline-flex">
-              {user ? "Private vault" : "Guest vault"}
-            </span>
-            {user ? (
-              <Link
-                to="/settings"
-                className="hidden rounded-md border border-white/[0.08] px-3 py-1.5 text-xs font-medium text-[#b8b4aa] transition-colors hover:border-[#c87c5a] hover:text-[#c87c5a] sm:block"
-              >
-                Account
-              </Link>
-            ) : (
-              <Link
-                to="/login"
-                className="rounded-md bg-[#c87c5a] px-3 py-1.5 text-xs font-semibold text-[#181818] transition-colors hover:bg-[#d89270]"
-              >
-                Sign in
-              </Link>
-            )}
+            <button
+              type="button"
+              onClick={handleConnectVault}
+              className="hidden h-11 items-center gap-2 rounded-xl border border-[#e4e6eb] bg-white px-4 text-sm font-semibold text-[#4d535f] transition hover:bg-[#f8f9fb] sm:inline-flex"
+              aria-label="Connect Obsidian"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+                <path d="M7 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8ZM17 4a3 3 0 1 0 0 6 3 3 0 0 0 0-6ZM17 14a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z" />
+                <path d="m10.3 9.3 3.9-1.5M10.4 14.8l3.5 1.3" />
+              </svg>
+              <span>{connectState === "done" ? "Exported" : "Connect"}</span>
+            </button>
           </div>
         </header>
 
-        <div className="flex min-h-0 flex-1">
-          <section className="min-w-0 flex-1">
-            {showEmpty && !isSending ? (
-              <EmptyState onSend={handleSend} disabled={isSending} />
-            ) : activeChat ? (
-              <ChatWindow
-                chat={activeChat}
-                onSend={handleSend}
-                isSending={isSending}
-                streamingMessageId={
-                  isSending
-                    ? activeChat.messages[activeChat.messages.length - 1]?.id
-                    : undefined
-                }
-              />
-            ) : (
-              <EmptyState onSend={handleSend} disabled={isSending} />
-            )}
-          </section>
-
-          <aside className="hidden w-[314px] shrink-0 border-l border-white/[0.08] bg-[#101114] p-4 xl:block">
-            <div className="rounded-xl border border-white/[0.08] bg-[#17181c] p-4">
-              <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-[#c87c5a]">
-                Sources
-              </p>
-              <div className="mt-3 rounded-lg border border-white/[0.08] bg-[#0b0c0f] p-3">
-                <div className="flex items-center justify-between gap-3">
-                  <strong className="truncate text-sm text-[#f1efe9]">{selectedLabel}</strong>
-                  <span className="h-2 w-2 rounded-full bg-[#75d083] shadow-[0_0_12px_rgba(117,208,131,0.8)]" />
-                </div>
-                <p className="mt-2 text-xs leading-relaxed text-[#8f8b84]">
-                  Active retrieval scope. Answers use this source context when
-                  the vault index is reachable.
-                </p>
-              </div>
-
-              <div className="mt-4 grid grid-cols-3 gap-2 text-center">
-                {[
-                  ["21", "docs"],
-                  ["64", "runs"],
-                  ["5", "top-k"],
-                ].map(([value, label]) => (
-                  <div key={label} className="rounded-lg border border-white/[0.08] bg-[#0b0c0f] px-2 py-3">
-                    <strong className="block font-mono text-sm text-[#e8e6e1]">{value}</strong>
-                    <span className="mt-1 block text-[10px] uppercase tracking-wider text-[#77736c]">{label}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="mt-4 rounded-xl border border-white/[0.08] bg-[#17181c] p-4">
-              <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-[#c87c5a]">
-                Studio
-              </p>
-              <div className="mt-3 space-y-2">
-                {["Briefing note", "Contradictions", "Obsidian outline"].map((item) => (
-                  <button
-                    key={item}
-                    type="button"
-                    className="w-full rounded-lg border border-white/[0.08] bg-[#0b0c0f] px-3 py-2 text-left text-xs font-semibold text-[#c9c4ba] transition hover:border-[#c87c5a]/50 hover:text-[#f1efe9]"
-                    onClick={() => handleSend(`Create a ${item.toLowerCase()} from the active source.`)}
-                    disabled={isSending}
-                  >
-                    {item}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="mt-4 rounded-xl border border-[#75d083]/20 bg-[#75d083]/[0.06] p-4">
-              <div className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.18em] text-[#75d083]">
-                <span className="h-2 w-2 animate-pulse rounded-full bg-[#75d083]" />
-                Grounding live
-              </div>
-              <p className="mt-2 text-xs leading-relaxed text-[#9a9790]">
-                This rail follows NotebookLM’s source-first layout while the
-                center chat keeps the darker live-agent feel.
-              </p>
-            </div>
-          </aside>
-        </div>
-      </main>
+        <section className="min-h-0 min-w-0 flex-1">
+          {showEmpty && !isSending ? (
+            <EmptyState onSend={handleSend} disabled={isSending} />
+          ) : activeChat ? (
+            <ChatWindow
+              chat={activeChat}
+              onSend={handleSend}
+              isSending={isSending}
+              streamingMessageId={
+                isSending
+                  ? activeChat.messages[activeChat.messages.length - 1]?.id
+                  : undefined
+              }
+            />
+          ) : (
+            <EmptyState onSend={handleSend} disabled={isSending} />
+          )}
+        </section>
+        </main>
+      </div>
     </div>
   );
 }

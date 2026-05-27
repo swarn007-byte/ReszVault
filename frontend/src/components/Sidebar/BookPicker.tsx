@@ -1,35 +1,27 @@
-import { useEffect, useRef, type ChangeEvent } from "react";
-import { Link } from "react-router-dom";
-import { useAuth } from "../../hooks/useAuth";
+import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import { useBookStore } from "../../store/bookStore";
 
-export function BookPicker() {
+type BookPickerProps = {
+  projectId?: string | null;
+};
+
+export function BookPicker({ projectId }: BookPickerProps) {
   const fileRef = useRef<HTMLInputElement>(null);
-  const { isAuthenticated } = useAuth();
+  const [isOpen, setIsOpen] = useState(true);
   const {
-    books,
-    selected,
     loading,
     uploading,
     error,
-    setSelected,
+    books,
+    projectBookIds,
     fetchBooks,
     uploadPdf,
     removeBook,
-    selectedLabel,
   } = useBookStore();
 
   useEffect(() => {
-    if (isAuthenticated) {
-      fetchBooks();
-    } else {
-      useBookStore.setState({
-        books: [],
-        error: null,
-        selected: { kind: "default" },
-      });
-    }
-  }, [isAuthenticated, fetchBooks]);
+    fetchBooks(projectId);
+  }, [fetchBooks, projectId]);
 
   const onFileChange = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -40,94 +32,135 @@ export function BookPicker() {
       return;
     }
     try {
-      await uploadPdf(file);
+      await uploadPdf(file, undefined, projectId);
     } catch {
       // error stored in bookStore
     }
   };
 
-  const onSelectChange = (e: ChangeEvent<HTMLSelectElement>) => {
-    const value = e.target.value;
-    if (value === "default") {
-      setSelected({ kind: "default" });
-      return;
-    }
-    setSelected({ kind: "user", id: value });
-  };
-
-  const selectValue = selected.kind === "default" ? "default" : selected.id;
-  const readyBooks = books.filter((b) => b.status === "ready");
-
-  if (!isAuthenticated) {
-    return (
-      <div className="rounded-lg border border-[rgba(255, 255, 255, 0.08)] bg-[#0b0c0f] px-3 py-3">
-        <p className="text-[10px] uppercase tracking-widest text-[#7a7875]">
-          Active source
-        </p>
-        <p className="mt-1 text-xs text-[#e8e6e1]">Default notebook</p>
-        <p className="mt-1 text-[11px] text-[#7a7875]">
-          Sign in to upload and query your PDFs.
-        </p>
-        <Link
-          to="/login"
-          className="mt-3 flex w-full items-center justify-center rounded-md border border-[rgba(255, 255, 255, 0.08)] bg-[#222222] py-2 text-[11px] font-semibold text-[#e8e6e1] transition-colors hover:border-[#c87c5a]/40 hover:text-[#c87c5a]"
-        >
-          Sign in for uploads
-        </Link>
-      </div>
-    );
-  }
+  const hasAnyProjectMap = Object.values(projectBookIds).some((bookIds) => bookIds.length > 0);
+  const scopedBooks = (() => {
+    if (!projectId) return books;
+    const ids = projectBookIds[projectId];
+    if (!ids && !hasAnyProjectMap) return books;
+    if (!ids) return [];
+    const idSet = new Set(ids);
+    return books.filter((book) => idSet.has(book.id));
+  })();
+  const readyBooks = scopedBooks.filter((b) => b.status === "ready");
+  const processingBooks = scopedBooks.filter((b) => b.status !== "ready");
 
   return (
-    <div className="space-y-2 rounded-lg border border-[rgba(255, 255, 255, 0.08)] bg-[#0b0c0f] p-3">
-      <label
-        htmlFor="active-book"
-        className="block text-[10px] uppercase tracking-widest text-[#7a7875]"
-      >
-        Active source
-      </label>
-
-      <select
-        id="active-book"
-        value={selectValue}
-        onChange={onSelectChange}
-        className="w-full rounded-md border border-[rgba(255, 255, 255, 0.08)] bg-[#222222] px-2.5 py-2 text-xs text-[#e8e6e1] focus:border-[#c87c5a]/50 focus:outline-none"
-      >
-        <option value="default">ReszVault workspace</option>
-        {readyBooks.map((book) => (
-          <option key={book.id} value={book.id}>
-            {book.title}
-          </option>
-        ))}
-        {books
-          .filter((b) => b.status !== "ready")
-          .map((book) => (
-            <option key={book.id} value={book.id} disabled>
-              {book.title} ({book.status})
-            </option>
-          ))}
-      </select>
-
-      <div className="flex items-center gap-2">
+    <div className="space-y-2">
+      <div className="overflow-hidden rounded-xl border border-[#e4e6eb] bg-white">
         <button
           type="button"
-          disabled={uploading}
-          onClick={() => fileRef.current?.click()}
-          className="min-w-0 flex-1 rounded-md border border-dashed border-[rgba(255, 255, 255, 0.13)] py-2 text-[11px] text-[#7a7875] transition-colors hover:border-[#c87c5a]/40 hover:text-[#e8e6e1] disabled:opacity-50"
+          onClick={() => setIsOpen((value) => !value)}
+          className="flex w-full items-center justify-between gap-3 px-3 py-2.5 text-left transition hover:bg-[#fafbfc]"
+          aria-expanded={isOpen}
         >
-          {uploading ? "Indexing PDF..." : "+ Add PDF"}
+          <span className="flex min-w-0 items-center gap-2.5">
+            <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-[#f2f4f7] text-[#6e737d]">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M4 19.5V5a2 2 0 0 1 2-2h8l6 6v10.5a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 19.5Z" />
+                <path d="M14 3v6h6" />
+              </svg>
+            </span>
+            <span className="min-w-0">
+              <span className="block text-xs font-semibold text-[#2f333d]">Sources</span>
+              <span className="mt-0.5 block text-[10px] text-[#8b909a]">
+                {readyBooks.length} indexed PDF{readyBooks.length === 1 ? "" : "s"}
+              </span>
+            </span>
+          </span>
+          <span className="flex items-center gap-2">
+            <span className="rounded-full bg-[#eef1f5] px-2 py-0.5 text-[10px] font-semibold text-[#6e737d]">
+              {readyBooks.length}
+            </span>
+            <svg
+              className={`h-4 w-4 text-[#8b909a] transition-transform ${isOpen ? "rotate-180" : ""}`}
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="m6 9 6 6 6-6" />
+            </svg>
+          </span>
         </button>
-        {selected.kind === "user" && (
-          <button
-            type="button"
-            onClick={() => removeBook(selected.id).catch(() => {})}
-            className="shrink-0 rounded-md border border-[rgba(255, 255, 255, 0.13)] px-2.5 py-2 text-[11px] text-[#7a7875] hover:border-red-300 hover:text-red-500"
-            aria-label={`Remove ${selectedLabel()}`}
-          >
-            Remove
-          </button>
+
+        {isOpen && (
+          <div className="border-t border-[#eef0f4] px-2.5 py-2.5">
+            {readyBooks.length === 0 && !loading && (
+              <p className="rounded-lg bg-[#f7f8fa] px-3 py-2.5 text-[11px] leading-relaxed text-[#8b909a]">
+                Upload PDFs to add context to this project.
+              </p>
+            )}
+
+            {readyBooks.length > 0 && (
+          <div className="max-h-40 space-y-1 overflow-y-auto pr-1">
+            {readyBooks.map((book) => (
+              <div
+                key={book.id}
+                className="group flex items-center gap-2 rounded-lg px-2 py-1.5 transition hover:bg-[#f7f8fa]"
+              >
+                <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg border border-[#e7eaf0] bg-white text-[#7d8490]">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" />
+                    <path d="M14 2v6h6" />
+                  </svg>
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-xs font-medium text-[#3f444f]">
+                    {book.title}
+                  </span>
+                  <span className="mt-0.5 block text-[10px] text-[#9aa0aa]">
+                    {book.chunkCount} chunks
+                  </span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => removeBook(book.id, projectId).catch(() => {})}
+                  className="grid h-7 w-7 shrink-0 place-items-center rounded-md text-[#9aa0aa] opacity-0 transition hover:bg-white hover:text-red-500 group-hover:opacity-100 focus:opacity-100"
+                  aria-label={`Remove ${book.title}`}
+                  title={`Remove ${book.title}`}
+                >
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
+                    <path d="M18 6 6 18M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+            ))}
+          </div>
+            )}
+
+            {processingBooks.length > 0 && (
+              <div className="mt-2 space-y-1">
+                {processingBooks.map((book) => (
+                  <div key={book.id} className="truncate rounded-lg bg-[#fafbfc] px-2.5 py-2 text-[11px] text-[#8b909a]">
+                    {book.title} ({book.status})
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         )}
       </div>
+
+      <button
+        type="button"
+        disabled={uploading}
+        onClick={() => fileRef.current?.click()}
+        className="flex min-w-0 w-full items-center justify-center gap-2 rounded-xl border border-[#e4e6eb] bg-[#fbfbfc] py-2.5 text-xs font-semibold text-[#6e737d] transition-colors hover:bg-[#f3f5f8] disabled:opacity-50"
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M12 5v14M5 12h14" />
+        </svg>
+        {uploading ? "Indexing..." : "Upload PDF"}
+      </button>
 
       <input
         ref={fileRef}
@@ -137,11 +170,11 @@ export function BookPicker() {
         onChange={onFileChange}
       />
 
-      {loading && books.length === 0 && (
-        <p className="text-[11px] text-[#7a7875]">Loading your books...</p>
+      {loading && scopedBooks.length === 0 && (
+        <p className="text-[11px] text-[#8b909a]">Loading...</p>
       )}
 
-      {error && (
+      {error && !error.toLowerCase().includes("request failed") && (
         <p className="text-[11px] leading-relaxed text-red-500" role="alert">
           {error}
         </p>
