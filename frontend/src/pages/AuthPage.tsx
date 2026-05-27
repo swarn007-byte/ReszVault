@@ -1,8 +1,9 @@
-import { useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { Link, Navigate, useNavigate } from "react-router-dom";
 import { authClient, useSession } from "../lib/auth-client";
 
 type Mode = "sign-in" | "sign-up";
+type ProviderConfig = { google: boolean };
 
 export function AuthPage() {
   const { data, isPending } = useSession();
@@ -13,6 +14,24 @@ export function AuthPage() {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [providers, setProviders] = useState<ProviderConfig>({
+    google: true,
+  });
+
+  useEffect(() => {
+    let alive = true;
+    fetch("/auth/providers")
+      .then((response) => (response.ok ? response.json() : null))
+      .then((config: ProviderConfig | null) => {
+        if (alive && config) setProviders(config);
+      })
+      .catch(() => {
+        if (alive) setProviders({ google: true });
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   if (!isPending && data?.user) return <Navigate to="/projects" replace />;
 
@@ -50,7 +69,12 @@ export function AuthPage() {
     }
   };
 
-  const handleSocial = async (provider: "google" | "twitter") => {
+  const handleSocial = async (provider: "google") => {
+    if (!providers[provider]) {
+      setError("Google login is not configured on the backend.");
+      return;
+    }
+
     setLoading(true);
     setError(null);
     try {
@@ -60,8 +84,11 @@ export function AuthPage() {
       });
       if (authError) throw new Error(authError.message ?? "Social sign-in failed");
     } catch (authError) {
+      const message = authError instanceof Error ? authError.message : "Social sign-in failed";
       setError(
-        authError instanceof Error ? authError.message : "Social sign-in failed",
+        message.includes("Failed to fetch") || message.includes("500")
+          ? "Authentication server is reachable, but the auth database is not. Check DATABASE_URL in backend/.env."
+          : message,
       );
       setLoading(false);
     }
@@ -70,53 +97,19 @@ export function AuthPage() {
   return (
     <main className="rv-auth">
       <Link className="rv-auth-brand" to="/">
-        <span>R</span>
+        <img src="/github-avatar.png" alt="" />
         <strong>reszvault</strong>
       </Link>
 
       <section className="rv-auth-stage">
-        <div className="rv-auth-story" aria-hidden="true">
-          <div className="rv-auth-orbit">
-            <span className="node node-main">Vault</span>
-            <span className="node node-a">PDF</span>
-            <span className="node node-b">Claim</span>
-            <span className="node node-c">Note</span>
-            <span className="node node-d">Source</span>
-            <i className="edge edge-a" />
-            <i className="edge edge-b" />
-            <i className="edge edge-c" />
-            <i className="edge edge-d" />
-          </div>
-
-          <div className="rv-auth-copy">
-            <p>Private research room</p>
-            <h1>Bring the papers. Keep the evidence.</h1>
-            <span>
-              Projects, PDFs, source-scoped chat, and grounded answers stay in
-              one focused workspace.
-            </span>
-          </div>
-
-          <div className="rv-auth-proof">
-            <div>
-              <small>active source</small>
-              <strong>attention-is-all-you-need.pdf</strong>
-            </div>
-            <div>
-              <small>indexed chunks</small>
-              <strong>42 ready</strong>
-            </div>
-          </div>
-        </div>
-
         <section className="rv-auth-card">
           <div className="rv-auth-card-head">
-            <span>{isSignUp ? "Create account" : "Welcome back"}</span>
-            <h2>{isSignUp ? "Start a research vault." : "Sign in to ReszVault."}</h2>
+            <span>{isSignUp ? "Create account" : "Authentication"}</span>
+            <h2>{isSignUp ? "Create your workspace." : "Sign in to continue."}</h2>
             <p>
               {isSignUp
-                ? "Create your workspace, add sources, and ask questions with context."
-                : "Open your projects, upload PDFs, and continue your grounded chats."}
+                ? "Create a project space for PDFs, source selection, and saved chats."
+                : "Access saved projects, uploaded sources, and previous research threads."}
             </p>
           </div>
 
@@ -147,10 +140,6 @@ export function AuthPage() {
             <button type="button" disabled={loading} onClick={() => handleSocial("google")}>
               <GoogleMark />
               Google
-            </button>
-            <button type="button" disabled={loading} onClick={() => handleSocial("twitter")}>
-              <XMark />
-              X
             </button>
           </div>
 
@@ -213,13 +202,15 @@ export function AuthPage() {
             </button>
           </form>
 
-          <button className="rv-auth-back" type="button" onClick={() => navigate("/")}>
-            Back to website
-          </button>
+          <div className="rv-auth-secondary-actions">
+            <button className="rv-auth-back" type="button" onClick={() => navigate("/")}>
+              Back
+            </button>
 
-          <button className="rv-auth-guest" type="button" onClick={() => navigate("/guest")}>
-            Enter as guest
-          </button>
+            <button className="rv-auth-guest" type="button" onClick={() => navigate("/guest")}>
+              Guest
+            </button>
+          </div>
         </section>
       </section>
     </main>
@@ -233,14 +224,6 @@ function GoogleMark() {
       <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84A10.99 10.99 0 0 0 12 23Z" />
       <path fill="#FBBC05" d="M5.84 14.1a6.6 6.6 0 0 1 0-4.2V7.06H2.18a10.99 10.99 0 0 0 0 9.88l3.66-2.84Z" />
       <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1A10.99 10.99 0 0 0 2.18 7.06L5.84 9.9C6.71 7.31 9.14 5.38 12 5.38Z" />
-    </svg>
-  );
-}
-
-function XMark() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path fill="currentColor" d="M14.6 10.4 22.8 1h-1.95l-7.12 8.15L8.04 1H1.5l8.6 12.31L1.5 23h1.95l7.52-8.61L16.98 23h6.54l-8.92-12.6Zm-2.66 3.04-.87-1.23L4.14 2.44h2.96l5.6 7.9.87 1.23 7.28 10.28h-2.96l-5.95-8.41Z" />
     </svg>
   );
 }

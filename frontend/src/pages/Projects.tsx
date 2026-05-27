@@ -1,12 +1,13 @@
 import { useState, type FormEvent } from "react";
-import { Navigate, useNavigate } from "react-router-dom";
+import { Navigate, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth";
 import { useProjectStore } from "../store/projectStore";
 
 export function ProjectsPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { user, isLoading } = useAuth();
-  const { projects, createProject, selectProject } = useProjectStore();
+  const { projects, activeProjectId, createProject, selectProject } = useProjectStore();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
 
@@ -20,16 +21,26 @@ export function ProjectsPage() {
 
   if (!user) return <Navigate to="/login" replace />;
 
+  const isManagingProjects = new URLSearchParams(location.search).get("manage") === "1";
+  if (activeProjectId && !isManagingProjects) {
+    return <Navigate to="/app" replace />;
+  }
+
   const openProject = (id: string) => {
     selectProject(id);
     navigate("/app", { replace: true });
   };
 
+  const createVault = (input: { name: string; description?: string }) => {
+    const trimmed = input.name.trim();
+    if (!trimmed) return;
+    const id = createProject({ name: trimmed, description: input.description });
+    openProject(id);
+  };
+
   const handleCreate = (event: FormEvent) => {
     event.preventDefault();
-    if (!name.trim()) return;
-    const id = createProject({ name, description });
-    openProject(id);
+    createVault({ name, description });
   };
 
   return (
@@ -37,59 +48,66 @@ export function ProjectsPage() {
       <section className="rv-project-shell">
         <div className="rv-project-hero">
           <div>
-            <div className="rv-project-kicker">Notebook rooms</div>
-            <h1>Choose a vault, then work inside its sources.</h1>
+            <span className="rv-project-kicker">Vaults</span>
+            <h1>Choose a project.</h1>
             <p>
-              Projects behave like focused notebooks: each one owns its sources,
-              retrieval context, chats, and studio outputs.
+              Keep uploaded PDFs, chats, and source graph context together.
             </p>
-          </div>
-          <div className="rv-project-status">
-            <span><i /> sync ready</span>
-            <strong>{projects.length}</strong>
-            <small>available vaults</small>
           </div>
         </div>
 
         <div className="rv-project-grid">
-          <form className="rv-project-create" onSubmit={handleCreate}>
-            <span>New vault</span>
-            <label>
-              Vault name
-              <input
-                value={name}
-                onChange={(event) => setName(event.target.value)}
-                placeholder="e.g. Climate finance notebook"
-                required
-              />
-            </label>
-            <label>
-              Short description
-              <textarea
-                value={description}
-                onChange={(event) => setDescription(event.target.value)}
-                placeholder="What sources and questions belong here?"
-                rows={4}
-              />
-            </label>
-            <button type="submit">Create vault</button>
-          </form>
+          <section className="rv-project-list" aria-label="Existing vaults">
+            <div className="rv-project-section-head">
+              <span>Existing projects</span>
+              <small>Open a vault and continue in chat.</small>
+            </div>
+            <div className="rv-project-cards">
+              {projects.map((project) => (
+                <button
+                  key={project.id}
+                  type="button"
+                  className="rv-project-card"
+                  onClick={() => openProject(project.id)}
+                >
+                  <span>Vault</span>
+                  <strong>{project.name}</strong>
+                  <small>{project.description}</small>
+                  <em>
+                    {project.sourceCount} sources · {project.graphNodes} graph nodes
+                  </em>
+                </button>
+              ))}
+            </div>
+          </section>
 
-          <div className="rv-project-list">
-            <span>Existing vaults</span>
-            {projects.map((project) => (
-              <button
-                key={project.id}
-                type="button"
-                className="rv-project-card"
-                onClick={() => openProject(project.id)}
-              >
-                <em>Notebook</em>
-                <strong>{project.name}</strong>
-                <small>{project.description}</small>
-              </button>
-            ))}
-          </div>
+          <aside className="rv-project-create" aria-label="Create vault">
+            <div className="rv-project-section-head">
+              <span>New project</span>
+              <small>Start clean, then upload PDFs.</small>
+            </div>
+            <form onSubmit={handleCreate}>
+              <label>
+                Project name
+                <input
+                  value={name}
+                  onChange={(event) => setName(event.target.value)}
+                  placeholder="e.g. AI intern screening"
+                  required
+                />
+              </label>
+              <label>
+                Short description
+                <textarea
+                  value={description}
+                  onChange={(event) => setDescription(event.target.value)}
+                  placeholder="What sources belong here?"
+                  rows={3}
+                />
+              </label>
+              <button type="submit">Create vault</button>
+            </form>
+          </aside>
         </div>
       </section>
     </main>

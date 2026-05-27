@@ -50,21 +50,21 @@ const presets = [
     id: "summary",
     label: '"Summarize the active source"',
     answer:
-      "ReszVault retrieved the highest-signal chunks from attention.pdf and produced a compact source-grounded summary with citations ready for a notebook note.",
+      "ReszVault retrieved relevant passages from attention.pdf and produced a concise summary with source references for review.",
     citations: ["attention.pdf", "chunk: transformers", "citation p.4"],
   },
   {
     id: "contradictions",
     label: '"Find contradictions across PDFs"',
     answer:
-      "The vault found one weak claim and two supporting passages. The answer stays scoped to the selected notebook so unrelated sources do not leak into the response.",
+      "The workspace identified one unsupported claim and two related passages. The response remains scoped to the selected project sources.",
     citations: ["claim map", "source p.12", "market-report.pdf"],
   },
   {
     id: "obsidian",
     label: '"Draft an Obsidian note"',
     answer:
-      "A notebook-ready outline was generated with headings, bullets, and source anchors. You can continue the thread in chat or turn it into a project note.",
+      "A structured outline was generated with headings, bullets, and source anchors for export into a note-taking workflow.",
     citations: ["obsidian note", "literature review", "top-k retrieval"],
   },
 ];
@@ -155,6 +155,8 @@ export function Home() {
       }
 
       for (const node of nodes) {
+        node.vx += Math.sin(performance.now() / 850 + node.y * 0.015) * 0.012;
+        node.vy += Math.cos(performance.now() / 980 + node.x * 0.015) * 0.012;
         node.vx += (cx - node.x) * 0.015 * alpha;
         node.vy += (cy - node.y) * 0.015 * alpha;
         node.vx *= 0.65;
@@ -162,7 +164,7 @@ export function Home() {
         node.x = Math.max(30, Math.min(rect.width - 30, node.x + node.vx));
         node.y = Math.max(30, Math.min(rect.height - 30, node.y + node.vy));
       }
-      alpha = Math.max(0.006, alpha * 0.985);
+      alpha = Math.max(0.18, alpha * 0.992);
     };
 
     const draw = () => {
@@ -188,18 +190,19 @@ export function Home() {
 
       for (const node of nodes) {
         const radius = node.size * 0.62;
+        const pulse = 1 + Math.sin(performance.now() / 700 + node.x * 0.01) * 0.08;
         if (node.kind === "thread") {
           ctx.save();
           ctx.shadowBlur = 18;
           ctx.shadowColor = "rgba(111, 107, 217, 0.45)";
           ctx.fillStyle = "rgba(111, 107, 217, 0.12)";
           ctx.beginPath();
-          ctx.arc(node.x, node.y, radius * 1.7, 0, Math.PI * 2);
+          ctx.arc(node.x, node.y, radius * 1.7 * pulse, 0, Math.PI * 2);
           ctx.fill();
           ctx.restore();
         }
         ctx.beginPath();
-        ctx.arc(node.x, node.y, radius, 0, Math.PI * 2);
+        ctx.arc(node.x, node.y, radius * pulse, 0, Math.PI * 2);
         ctx.fillStyle = colorFor(node);
         ctx.fill();
         ctx.strokeStyle =
@@ -231,15 +234,16 @@ export function Home() {
     };
   }, []);
 
-  const openSandbox = () => navigate("/login");
+  const openSandbox = () => navigate("/guest");
   const openGuest = () => navigate("/guest");
+  const openAuth = () => navigate("/login");
 
   return (
     <div className="rv-webcopy">
       <header className="copy-header">
         <div className="copy-nav-container">
           <Link className="copy-brand" to="/">
-            <span className="copy-logo">R</span>
+            <img className="copy-logo-img" src="/github-avatar.png" alt="" />
             <span>reszvault</span>
           </Link>
           <nav className="copy-nav-menu">
@@ -248,10 +252,15 @@ export function Home() {
             <a href="#features">Features</a>
             <a href="#faq">FAQ</a>
           </nav>
-          <button className="copy-nav-btn" type="button" onClick={openSandbox}>
-            Open Sandbox
-            <ArrowIcon />
-          </button>
+          <div className="copy-nav-actions">
+            <button className="copy-icon-btn" type="button" onClick={openAuth} aria-label="Open login">
+              <SettingsIcon />
+            </button>
+            <button className="copy-nav-btn" type="button" onClick={openSandbox}>
+              Open Sandbox
+              <ArrowIcon />
+            </button>
+          </div>
         </div>
       </header>
 
@@ -260,25 +269,24 @@ export function Home() {
           <div className="copy-hero-container">
             <span className="copy-hero-badge">
               <span className="copy-pulse-dot" />
-              NotebookLM-style vault for grounded research
+              Source-grounded workspace for document research
             </span>
             <h1>
-              Every chat forgets your sources.
+              Trust every answer.
               <br />
-              <span>ReszVault is the memory underneath.</span>
+              <span>Chat across your sources.</span>
             </h1>
             <p>
-              Upload PDFs into notebook-style projects, ask questions against
-              selected sources, and turn retrieved evidence into Obsidian-ready
-              notes without losing context between chats.
+              Upload multiple PDFs, ask once, and let ReszVault retrieve the
+              connected context before it answers.
             </p>
             <div className="copy-hero-actions">
               <button className="copy-btn-primary" type="button" onClick={openSandbox}>
-                Launch Interactive Sandbox
+                Open Sandbox
                 <ArrowIcon />
               </button>
               <button className="copy-btn-secondary" type="button" onClick={openGuest}>
-                Enter as Guest
+                Continue as Guest
               </button>
             </div>
             <div className="copy-hero-stats">
@@ -301,12 +309,11 @@ export function Home() {
         <section className="copy-sandbox" id="sandbox">
           <div className="copy-section-head">
             <span>Interactive Demo</span>
-            <h2>Query your research vault in real time.</h2>
+              <h2>Review sources, retrieval, and answers in one workspace.</h2>
             <p>
-              Same command-center layout as the website reference: chat and
-              telemetry on the left, Obsidian-style source graph on the right.
-              NotebookLM behavior is adapted through sources, projects, and
-              studio actions.
+              The interface combines a source-aware chat console with a graph
+              preview of documents, claims, and citations. It is designed to
+              make retrieval behavior visible rather than hidden.
             </p>
           </div>
 
@@ -323,18 +330,18 @@ export function Home() {
 
               <div className="copy-console-body">
                 <div className="copy-console-intro">
-                  <p>// ReszVault notebook selected: Literature Review</p>
-                  <p>// Connected source: attention.pdf (42 indexed chunks)</p>
-                  <p className="success">// Status: READY. Query evidence below.</p>
+                  <p>Project selected: Literature Review</p>
+                  <p>Connected sources: attention.pdf, market.pdf, notes.pdf</p>
+                  <p className="success">Ready for source-grounded chat.</p>
                 </div>
 
                 <div className="copy-terminal">
                   <div className="copy-terminal-line">
-                    <span>$</span> POST /chat/stream --source active-vault
+                    <span>›</span> Ask across active project sources
                   </div>
                   <div className="copy-log-line"><b>[retrieve]</b> semantic top-k selected</div>
                   <div className="copy-log-line"><b>[ground]</b> citations attached to answer</div>
-                  <div className="copy-log-line"><b>[studio]</b> note outline ready</div>
+                  <div className="copy-log-line"><b>[note]</b> structured outline ready</div>
                 </div>
 
                 <div className="copy-output-card">
@@ -369,8 +376,8 @@ export function Home() {
               <div className="copy-panel-header">
                 <span className="copy-panel-title">source_graph.json</span>
                 <div className="copy-graph-actions">
-                  <button type="button">Reheat</button>
-                  <button type="button">Zoom Out</button>
+                  <button type="button">Trace answer</button>
+                  <button type="button">Export .md</button>
                 </div>
               </div>
               <div className="copy-graph-canvas-container">
@@ -378,11 +385,11 @@ export function Home() {
               </div>
               <div className="copy-graph-footer">
                 <div>
-                  <span><i className="thread" /> Thread</span>
-                  <span><i className="entity" /> Source</span>
-                  <span><i className="event" /> Event</span>
+                  <span><i className="thread" /> Answer</span>
+                  <span><i className="entity" /> PDF</span>
+                  <span><i className="event" /> Claim</span>
                 </div>
-                <p>Animated source graph · Notebook context stays scoped.</p>
+                <p>Click a node to inspect citations and linked source chunks.</p>
               </div>
             </div>
           </div>
@@ -390,15 +397,15 @@ export function Home() {
 
         <section className="copy-pipeline" id="pipeline">
           <div className="copy-section-head">
-            <span>Notebook Workflow</span>
-            <h2>Project. Source. Retrieve. Studio.</h2>
+              <span>Workflow</span>
+            <h2>Project. Source. Retrieve. Review.</h2>
           </div>
           <div className="copy-card-grid">
             {[
-              ["01", "Choose project", "Start in a notebook-style vault so sources stay separate."],
+              ["01", "Choose project", "Keep each research task in a separate workspace."],
               ["02", "Upload sources", "Index PDFs into chunks, claims, citations, and notes."],
-              ["03", "Ask chat", "Query only the active source or the full project vault."],
-              ["04", "Create notes", "Turn answers into summaries, contradictions, and outlines."],
+              ["03", "Ask chat", "Query the full project vault by default."],
+              ["04", "Review outputs", "Turn answers into summaries, contradictions, and outlines."],
             ].map(([step, title, text]) => (
               <article key={step}>
                 <span>{step}</span>
@@ -411,13 +418,29 @@ export function Home() {
 
         <section className="copy-pipeline" id="features">
           <div className="copy-section-head">
-            <span>NotebookLM adapted</span>
-            <h2>Source-first chat, darker command-center UI.</h2>
+              <span>Product surface</span>
+            <h2>Source-first chat with transparent retrieval state.</h2>
           </div>
           <div className="copy-card-grid three">
-            <article><h3>Sources rail</h3><p>Signed-in users upload and select PDFs from the left rail.</p></article>
-            <article><h3>Central chat</h3><p>The chat surface stays focused and grounded to the selected source.</p></article>
-            <article><h3>Studio prompts</h3><p>Generate briefings, contradictions, and Obsidian outlines from context.</p></article>
+            <article><h3>Sources rail</h3><p>Signed-in users upload PDFs into one project context.</p></article>
+            <article><h3>Central chat</h3><p>The chat surface stays grounded to all indexed project sources.</p></article>
+            <article><h3>Obsidian graph</h3><p>Show PDFs, chunks, claims, answers, and shared concepts as linked nodes.</p></article>
+          </div>
+        </section>
+
+        <section className="copy-pipeline" id="testimonials">
+          <div className="copy-section-head">
+            <span>Use cases</span>
+            <h2>Built for projects with more than one document.</h2>
+            <p>
+              ReszVault keeps project PDFs together, so summaries and answers
+              can connect related context instead of treating each file alone.
+            </p>
+          </div>
+          <div className="copy-card-grid three">
+            <article><h3>AI intern JD</h3><p>Compare job descriptions, resumes, and notes in one source-grounded workspace.</p></article>
+            <article><h3>Research vault</h3><p>Ask across 3-4 PDFs and retrieve evidence from the full project context.</p></article>
+            <article><h3>Obsidian handoff</h3><p>Export answers with citations, backlinks, and source snippets as markdown.</p></article>
           </div>
         </section>
 
@@ -442,6 +465,20 @@ function ArrowIcon() {
         strokeLinecap="round"
         strokeLinejoin="round"
         strokeWidth="1.8"
+      />
+    </svg>
+  );
+}
+
+function SettingsIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <circle cx="12" cy="12" r="3.4" stroke="currentColor" strokeWidth="1.8" />
+      <path
+        d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1A2 2 0 1 1 4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.6-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.3 7A2 2 0 1 1 7 4.2l.1.1a1.7 1.7 0 0 0 1.9.3h.1a1.7 1.7 0 0 0 1-1.6V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.6h.1a1.7 1.7 0 0 0 1.9-.3l.1-.1A2 2 0 1 1 19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9v.1a1.7 1.7 0 0 0 1.6 1h.1a2 2 0 1 1 0 4H21a1.7 1.7 0 0 0-1.6 1Z"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
       />
     </svg>
   );
