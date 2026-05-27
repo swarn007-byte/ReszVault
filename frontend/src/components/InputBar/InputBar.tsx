@@ -1,5 +1,30 @@
 import { useRef, useState, type KeyboardEvent } from "react";
 
+type SpeechRecognitionConstructor = new () => {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  onresult: ((event: SpeechRecognitionEventLike) => void) | null;
+  onend: (() => void) | null;
+  onerror: (() => void) | null;
+  start: () => void;
+  stop: () => void;
+};
+
+type SpeechRecognitionEventLike = {
+  results: ArrayLike<{
+    0?: {
+      transcript?: string;
+    };
+  }>;
+};
+
+type SpeechWindow = Window &
+  typeof globalThis & {
+    SpeechRecognition?: SpeechRecognitionConstructor;
+    webkitSpeechRecognition?: SpeechRecognitionConstructor;
+  };
+
 type Props = {
   onSend: (text: string) => void;
   disabled?: boolean;
@@ -8,7 +33,10 @@ type Props = {
 
 export function InputBar({ onSend, disabled, autoFocus }: Props) {
   const [value, setValue] = useState("");
+  const [isListening, setIsListening] = useState(false);
+  const [voiceError, setVoiceError] = useState<string | null>(null);
   const ref = useRef<HTMLTextAreaElement>(null);
+  const recognitionRef = useRef<InstanceType<SpeechRecognitionConstructor> | null>(null);
 
   const adjustHeight = () => {
     const el = ref.current;
@@ -34,36 +62,99 @@ export function InputBar({ onSend, disabled, autoFocus }: Props) {
 
   const canSend = Boolean(value.trim()) && !disabled;
 
+  const startVoiceInput = () => {
+    if (disabled) return;
+    setVoiceError(null);
+
+    if (isListening) {
+      recognitionRef.current?.stop();
+      setIsListening(false);
+      return;
+    }
+
+    const SpeechRecognition =
+      (window as SpeechWindow).SpeechRecognition ??
+      (window as SpeechWindow).webkitSpeechRecognition;
+
+    if (!SpeechRecognition) {
+      setVoiceError("Voice input is not supported in this browser.");
+      return;
+    }
+
+    const recognition = new SpeechRecognition();
+    recognition.continuous = false;
+    recognition.interimResults = false;
+    recognition.lang = "en-IN";
+    recognitionRef.current = recognition;
+
+    recognition.onresult = (event) => {
+      const transcript = Array.from(event.results)
+        .map((result) => result[0]?.transcript ?? "")
+        .join(" ")
+        .trim();
+      if (!transcript) return;
+      setValue((current) => {
+        const next = current.trim() ? `${current.trim()} ${transcript}` : transcript;
+        window.requestAnimationFrame(adjustHeight);
+        return next;
+      });
+      ref.current?.focus();
+    };
+    recognition.onend = () => setIsListening(false);
+    recognition.onerror = () => {
+      setIsListening(false);
+      setVoiceError("Could not hear that. Try again.");
+    };
+
+    setIsListening(true);
+    recognition.start();
+  };
+
   return (
-    <div className="w-full">
-      <div className="rounded-xl border border-white/[0.12] bg-[#222222] px-3 py-3 shadow-[0_18px_55px_rgba(0,0,0,0.18)] transition-colors focus-within:border-[#c87c5a]/60 focus-within:ring-2 focus-within:ring-[#c87c5a]/15">
-        <textarea
-          ref={ref}
-          value={value}
-          onChange={(e) => {
-            setValue(e.target.value);
-            adjustHeight();
-          }}
-          onKeyDown={onKeyDown}
-          onInput={adjustHeight}
-          rows={1}
-          autoFocus={autoFocus}
-          disabled={disabled}
-          placeholder="Ask a grounded question about the active vault..."
-          className="max-h-40 min-h-[34px] w-full resize-none bg-transparent px-1 py-1 text-sm leading-relaxed text-[#f1efe9] placeholder:text-[#8f8b84] focus:outline-none disabled:opacity-50"
-        />
-        <div className="mt-2 flex items-center justify-between gap-3 border-t border-white/[0.06] pt-2">
-          <p className="truncate text-[10px] text-[#8f8b84]">
-            Enter to send · Shift+Enter for new line
-          </p>
+    <div className="min-w-0 w-full">
+      <div className="rounded-2xl border border-[#dfe2e7] bg-white shadow-[0_10px_28px_rgba(35,39,47,0.08)] transition-colors focus-within:border-[#c7ccd5]">
+        <div className="flex min-w-0 items-end gap-3 px-4 py-3">
+          <textarea
+            ref={ref}
+            value={value}
+            onChange={(e) => {
+              setValue(e.target.value);
+              adjustHeight();
+            }}
+            onKeyDown={onKeyDown}
+            onInput={adjustHeight}
+            rows={1}
+            autoFocus={autoFocus}
+            disabled={disabled}
+            placeholder="Type your message here..."
+            className="max-h-40 min-h-[36px] min-w-0 flex-1 resize-none bg-transparent px-1 py-1.5 text-[15px] leading-relaxed text-[#242731] placeholder:text-[#969ca6] focus:outline-none disabled:opacity-50"
+          />
+          <button
+            type="button"
+            onClick={startVoiceInput}
+            disabled={disabled}
+            className={`mb-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-xl transition ${
+              isListening
+                ? "bg-[#242731] text-white"
+                : "bg-[#f1f3f6] text-[#7c828d] hover:bg-[#e8ebf0]"
+            } disabled:opacity-50`}
+            aria-label={isListening ? "Stop voice input" : "Start voice input"}
+            title={isListening ? "Stop voice input" : "Start voice input"}
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+              <path d="M12 14a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v5a3 3 0 0 0 3 3Z" />
+              <path d="M19 11a7 7 0 0 1-14 0" />
+              <path d="M12 18v3" />
+            </svg>
+          </button>
           <button
             type="button"
             onClick={handleSend}
             disabled={!canSend}
-            className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg transition-all ${
+            className={`mb-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-xl transition-all ${
               canSend
-                ? "bg-[#c87c5a] text-[#181818] shadow-sm hover:bg-[#d89270]"
-                : "bg-[#2a2a2a] text-[#77736c]"
+                ? "bg-[#242731] text-white hover:bg-[#111318]"
+                : "bg-[#f1f3f6] text-[#9aa0aa]"
             }`}
             aria-label="Send"
           >
@@ -83,6 +174,9 @@ export function InputBar({ onSend, disabled, autoFocus }: Props) {
           </button>
         </div>
       </div>
+      {voiceError && (
+        <p className="mt-1 px-2 text-[11px] text-[#8b909a]">{voiceError}</p>
+      )}
     </div>
   );
 }
