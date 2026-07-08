@@ -107,9 +107,9 @@ export function Home() {
     };
 
     const colorFor = (node: GraphNode) => {
-      if (node.kind === "thread") return "#8a85f4";
-      if (node.kind === "entity") return "#a1a1aa";
-      return "#52525b";
+      if (node.kind === "thread") return "#e8791a";
+      if (node.kind === "entity") return "#8f98a6";
+      return "#cfd4dc";
     };
 
     const step = () => {
@@ -182,8 +182,8 @@ export function Home() {
         ctx.lineTo(target.x, target.y);
         ctx.strokeStyle =
           link.kind === "thread_event"
-            ? "rgba(138, 133, 244, 0.34)"
-            : "rgba(255, 255, 255, 0.12)";
+            ? "rgba(232, 121, 26, 0.36)"
+            : "rgba(36, 39, 49, 0.14)";
         ctx.lineWidth = link.kind === "thread_event" ? 1.6 : 1;
         ctx.stroke();
       }
@@ -194,8 +194,8 @@ export function Home() {
         if (node.kind === "thread") {
           ctx.save();
           ctx.shadowBlur = 18;
-          ctx.shadowColor = "rgba(111, 107, 217, 0.45)";
-          ctx.fillStyle = "rgba(111, 107, 217, 0.12)";
+          ctx.shadowColor = "rgba(232, 121, 26, 0.38)";
+          ctx.fillStyle = "rgba(232, 121, 26, 0.13)";
           ctx.beginPath();
           ctx.arc(node.x, node.y, radius * 1.7 * pulse, 0, Math.PI * 2);
           ctx.fill();
@@ -206,7 +206,7 @@ export function Home() {
         ctx.fillStyle = colorFor(node);
         ctx.fill();
         ctx.strokeStyle =
-          node.kind === "thread" ? "rgba(138,133,244,0.48)" : "rgba(255,255,255,0.18)";
+          node.kind === "thread" ? "rgba(232,121,26,0.58)" : "rgba(36,39,49,0.16)";
         ctx.lineWidth = 1.2;
         ctx.stroke();
 
@@ -217,7 +217,7 @@ export function Home() {
               : "400 9px JetBrains Mono, monospace";
           ctx.textAlign = "left";
           ctx.fillStyle =
-            node.kind === "thread" ? "rgba(250,250,250,0.92)" : "rgba(161,161,170,0.72)";
+            node.kind === "thread" ? "rgba(31,34,42,0.9)" : "rgba(95,102,114,0.72)";
           ctx.fillText(node.label, node.x + radius + 7, node.y + 3);
         }
       }

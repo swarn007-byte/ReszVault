@@ -2911,6 +2911,176 @@ textarea {
     background: #9aa1ad;
 }
 
+/* Home page final pass: warmer, sharper, less flat */
+.rv-webcopy {
+    --copy-bg: #eef1f5;
+    --copy-fg: #22252d;
+    --copy-card: #fffdfa;
+    --copy-input: #fbf7f2;
+    --copy-border: #e0d8cf;
+    --copy-border-hover: #efb77f;
+    --copy-soft: #626976;
+    --copy-muted: #8a909a;
+    --copy-purple: #e8791a;
+    --copy-purple-glow: rgba(232, 121, 26, 0.13);
+    --copy-purple-border: rgba(232, 121, 26, 0.36);
+    --copy-green: #16a34a;
+    background:
+        linear-gradient(180deg, #e8edf3 0%, #f0f2f5 42%, #eceff3 100%);
+}
+
+.copy-header {
+    border-bottom: 1px solid rgba(232, 121, 26, 0.18);
+    background: rgba(255, 253, 250, 0.94);
+    box-shadow: 0 1px 0 rgba(232, 121, 26, 0.08);
+    backdrop-filter: blur(14px);
+}
+
+.copy-brand span {
+    color: #1f222a;
+}
+
+.copy-nav-menu a {
+    color: #646b76;
+}
+
+.copy-nav-menu a:hover {
+    color: #d86f1c;
+}
+
+.copy-icon-btn,
+.copy-nav-btn,
+.copy-btn-primary,
+.copy-btn-secondary {
+    border-color: rgba(232, 121, 26, 0.22);
+    background: #fffdfa;
+}
+
+.copy-nav-btn,
+.copy-btn-primary {
+    box-shadow: inset 0 0 0 1px rgba(232, 121, 26, 0.08), 0 8px 24px rgba(35, 39, 47, 0.06);
+}
+
+.copy-nav-btn:hover,
+.copy-btn-primary:hover,
+.copy-btn-secondary:hover,
+.copy-icon-btn:hover {
+    border-color: rgba(232, 121, 26, 0.46);
+    background: #fff7ef;
+    color: #bd5f16;
+}
+
+.copy-hero {
+    background:
+        radial-gradient(circle at 50% 8%, rgba(232, 121, 26, 0.16), transparent 34rem),
+        linear-gradient(180deg, #e7ebf1 0%, #eef1f5 100%);
+}
+
+.copy-hero-container {
+    position: relative;
+    overflow: hidden;
+    border-top: 1px solid rgba(232, 121, 26, 0.18);
+    background:
+        linear-gradient(180deg, rgba(255, 253, 250, 0.88), rgba(247, 248, 250, 0.98)),
+        #f7f8fa;
+}
+
+.copy-hero-container::before {
+    content: "";
+    position: absolute;
+    inset: 0 0 auto;
+    height: 3px;
+    background: linear-gradient(90deg, transparent, rgba(232, 121, 26, 0.72), transparent);
+}
+
+.copy-hero-badge {
+    border-color: rgba(232, 121, 26, 0.32);
+    background: #fff7ef;
+    color: #c9681d;
+}
+
+.copy-pulse-dot {
+    background: #16a34a;
+    box-shadow: 0 0 0 4px rgba(22, 163, 74, 0.12), 0 0 14px rgba(22, 163, 74, 0.45);
+}
+
+.copy-hero h1 span {
+    background: linear-gradient(135deg, #262932 18%, #d86f1c 74%, #ff9d45 100%);
+    background-clip: text;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    color: #d86f1c;
+}
+
+.copy-hero-stats {
+    border-color: rgba(232, 121, 26, 0.18);
+}
+
+.copy-hero-stats div + div {
+    border-color: rgba(232, 121, 26, 0.14);
+}
+
+.copy-sandbox,
+.copy-pipeline,
+.copy-faq {
+    border-color: #ded6cd;
+    background: #f4f5f7;
+}
+
+.copy-panel,
+.copy-card-grid article {
+    border-color: #ded6cd;
+    background: #fffdfa;
+    box-shadow: 0 16px 38px rgba(36, 42, 54, 0.07);
+}
+
+.copy-panel:hover,
+.copy-card-grid article:hover {
+    border-color: rgba(232, 121, 26, 0.32);
+}
+
+.copy-console-panel .copy-panel-header,
+.copy-console-panel .copy-console-body,
+.copy-console-panel .copy-console-footer,
+.copy-console-panel .copy-panel-tab,
+.copy-console-panel .copy-terminal,
+.copy-console-panel .copy-output-card,
+.copy-console-panel .copy-output-card button {
+    background: #fffaf5;
+}
+
+.copy-console-panel .copy-panel-header,
+.copy-console-panel .copy-console-footer,
+.copy-console-panel .copy-output-card,
+.copy-console-panel .copy-output-card button {
+    border-color: #efd4bd;
+}
+
+.copy-console-panel .copy-terminal-line span,
+.copy-console-panel .copy-log-line b,
+.copy-console-panel .copy-output-card > span,
+.copy-section-head span,
+.copy-card-grid article span {
+    color: #d86f1c;
+}
+
+.copy-console-panel .copy-output-card > span {
+    border-color: rgba(232, 121, 26, 0.3);
+    background: rgba(232, 121, 26, 0.09);
+}
+
+.copy-graph-canvas-container {
+    border: 1px solid rgba(232, 121, 26, 0.16);
+    background:
+        linear-gradient(rgba(36, 39, 49, 0.035) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(36, 39, 49, 0.035) 1px, transparent 1px),
+        #fbf7f2;
+}
+
+.copy-graph-footer .thread { background: #e8791a; }
+.copy-graph-footer .entity { background: #8f98a6; }
+.copy-graph-footer .event { background: #cfd4dc; }
+
 /* Vault setup: compact white/grey NotebookLM-style flow */
 .rv-project-page {
     min-height: 100dvh;
