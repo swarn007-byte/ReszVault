@@ -199,6 +199,11 @@ def load_books_for_chat(owner: str | None, book_id: str | None, book_ids: list[s
 
 
 def request_base_url(request: Request) -> str:
+    forwarded_proto = request.headers.get("x-forwarded-proto")
+    forwarded_host = request.headers.get("x-forwarded-host")
+    if forwarded_host and not forwarded_host.endswith(".onrender.com"):
+        return f"{forwarded_proto or request.url.scheme}://{forwarded_host}".rstrip("/")
+
     configured = os.getenv("BACKEND_PUBLIC_URL")
     if configured:
         return configured.rstrip("/")
@@ -206,8 +211,6 @@ def request_base_url(request: Request) -> str:
     if request.url.hostname in {"127.0.0.1", "localhost"}:
         return "http://localhost:3000"
 
-    forwarded_proto = request.headers.get("x-forwarded-proto")
-    forwarded_host = request.headers.get("x-forwarded-host")
     if forwarded_host:
         return f"{forwarded_proto or request.url.scheme}://{forwarded_host}".rstrip("/")
 
