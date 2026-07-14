@@ -5,6 +5,7 @@ import hmac
 import os
 import re
 import secrets
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -13,7 +14,7 @@ from urllib.parse import urlencode, urlparse
 import json
 import urllib.request
 
-from fastapi import Cookie, FastAPI, File, Form, Header, HTTPException, Request, Response, UploadFile
+from fastapi import BackgroundTasks, Cookie, FastAPI, File, Form, Header, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel
@@ -81,6 +82,7 @@ class EmailAuthRequest(BaseModel):
     rememberMe: bool | None = None
 
 
+
 def hash_password(password: str, salt: str | None = None) -> str:
     salt = salt or secrets.token_hex(16)
     digest = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), 180_000).hex()
@@ -111,21 +113,21 @@ def serialize_user(row: dict | None) -> dict | None:
 def create_session(response: Response, user_id: str) -> dict:
     token = secrets.token_urlsafe(32)
     expires = datetime.now(timezone.utc) + timedelta(days=SESSION_DAYS)
+
     with db() as conn:
         conn.execute(
             "INSERT INTO sessions (token, user_id, expires_at, created_at) VALUES (?, ?, ?, ?)",
             (token, user_id, expires.isoformat(), utc_now()),
         )
+
     response.set_cookie(
         SESSION_COOKIE,
         token,
         httponly=True,
-        samesite="lax",
-        secure=os.getenv("NODE_ENV") == "production",
         max_age=SESSION_DAYS * 24 * 60 * 60,
         path="/",
     )
-    return {"token": token, "userId": user_id, "expiresAt": expires.isoformat()}
+    return {"userId": user_id, "expiresAt": expires.isoformat()}
 
 
 def get_user_from_session(token: str | None) -> dict | None:
@@ -169,33 +171,109 @@ def serialize_book(row: dict) -> dict:
     }
 
 
-def load_books_for_chat(owner: str | None, book_id: str | None, book_ids: list[str] | None) -> list[BookContext]:
+def requested_book_ids(book_id: str | None, book_ids: list[str] | None) -> list[str]:
+    return [book_id] if book_id else list(dict.fromkeys(book_ids or []))
+
+
+def load_book_rows(
+    owner: str | None,
+    ids: list[str] | None = None,
+    statuses: tuple[str, ...] | None = None,
+) -> list[dict]:
     if not owner:
         return []
-    ids = [book_id] if book_id else list(dict.fromkeys(book_ids or []))
-    if not ids:
-        with db() as conn:
-            rows = conn.execute(
-                "SELECT * FROM books WHERE owner_key = ? AND status = 'ready' ORDER BY created_at DESC",
-                (owner,),
-            ).fetchall()
-    else:
-        placeholders = ",".join("?" for _ in ids)
-        with db() as conn:
-            rows = conn.execute(
-                f"SELECT * FROM books WHERE owner_key = ? AND status = 'ready' AND id IN ({placeholders}) ORDER BY created_at DESC",
-                (owner, *ids),
-            ).fetchall()
+
+    clauses = ["owner_key = ?"]
+    params: list[str] = [owner]
+
+    if statuses:
+        clauses.append(f"status IN ({','.join('?' for _ in statuses)})")
+        params.extend(statuses)
+    if ids:
+        clauses.append(f"id IN ({','.join('?' for _ in ids)})")
+        params.extend(ids)
+
+    query = f"SELECT * FROM books WHERE {' AND '.join(clauses)} ORDER BY created_at DESC"
+    with db() as conn:
+        rows = conn.execute(query, tuple(params)).fetchall()
+    return [row_to_dict(row) or {} for row in rows]
+
+
+def load_books_for_chat(
+    owner: str | None,
+    book_id: str | None,
+    book_ids: list[str] | None,
+) -> list[BookContext]:
+    if not owner:
+        return []
+
+    ids = requested_book_ids(book_id, book_ids)
+    rows = load_book_rows(owner, ids=ids or None, statuses=("ready",))
 
     books: list[BookContext] = []
+
     with db() as conn:
         for row in rows:
             chunks = conn.execute(
                 "SELECT content FROM chunks WHERE book_id = ? ORDER BY chunk_index",
                 (row["id"],),
             ).fetchall()
-            books.append(BookContext(id=row["id"], title=row["title"], chunks=[chunk["content"] for chunk in chunks]))
+
+            books.append(
+                BookContext(
+                    id=row["id"],
+                    title=row["title"],
+                    chunks=[chunk["content"] for chunk in chunks],
+                )
+            )
+
     return books
+
+
+def chat_block_reason(owner: str | None, book_id: str | None, book_ids: list[str] | None) -> str | None:
+    if not owner:
+        return "Open a guest vault or sign in before asking questions."
+
+    rows = load_book_rows(owner, ids=requested_book_ids(book_id, book_ids) or None)
+    if not rows:
+        return None
+
+    processing_count = sum(1 for row in rows if row.get("status") == "processing")
+    if processing_count:
+        plural = "" if processing_count == 1 else "s"
+        return f"Your vault is still indexing {processing_count} PDF{plural}. Wait for indexing to finish before asking a question."
+
+    failed = [row for row in rows if row.get("status") == "failed"]
+    if failed and not any(row.get("status") == "ready" for row in rows):
+        return failed[0].get("error") or "The selected PDFs failed during indexing. Re-upload them and try again."
+
+    return None
+
+
+def process_uploaded_book(book_id: str, pdf_bytes: bytes) -> None:
+    try:
+        time.sleep(1.2)
+        chunks = split_pdf_text(pdf_bytes)
+        if not chunks:
+            raise ValueError("No readable text found in PDF.")
+
+        with db() as conn:
+            conn.execute("DELETE FROM chunks WHERE book_id = ?", (book_id,))
+            for index, chunk in enumerate(chunks):
+                conn.execute(
+                    "INSERT INTO chunks (id, book_id, content, chunk_index, created_at) VALUES (?, ?, ?, ?, ?)",
+                    (f"chunk_{uuid.uuid4().hex}", book_id, chunk, index, utc_now()),
+                )
+            conn.execute(
+                "UPDATE books SET status = ?, chunk_count = ?, error = ? WHERE id = ?",
+                ("ready", len(chunks), None, book_id),
+            )
+    except Exception as exc:
+        with db() as conn:
+            conn.execute(
+                "UPDATE books SET status = ?, chunk_count = ?, error = ? WHERE id = ?",
+                ("failed", 0, str(exc), book_id),
+            )
 
 
 def request_base_url(request: Request) -> str:
@@ -393,6 +471,7 @@ def list_books(
 
 @app.post("/books/upload")
 async def upload_book(
+    background_tasks: BackgroundTasks,
     file: Annotated[UploadFile, File()],
     title: Annotated[str | None, Form()] = None,
     x_guest_id: Annotated[str | None, Header(alias="x-guest-id")] = None,
@@ -405,9 +484,6 @@ async def upload_book(
         raise HTTPException(status_code=400, detail="Only PDF files are allowed.")
 
     raw = await file.read()
-    chunks = split_pdf_text(raw)
-    if not chunks:
-        raise HTTPException(status_code=422, detail="No readable text found in PDF.")
 
     book_id = f"book_{uuid.uuid4().hex}"
     safe_name = f"{book_id}.pdf"
@@ -420,28 +496,25 @@ async def upload_book(
     with db() as conn:
         conn.execute(
             "INSERT INTO books (id, owner_key, title, filename, status, chunk_count, error, file_path, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (book_id, owner, book_title, file.filename, "ready", len(chunks), None, str(path), created),
+            (book_id, owner, book_title, file.filename, "processing", 0, None, str(path), created),
         )
-        for index, chunk in enumerate(chunks):
-            conn.execute(
-                "INSERT INTO chunks (id, book_id, content, chunk_index, created_at) VALUES (?, ?, ?, ?, ?)",
-                (f"chunk_{uuid.uuid4().hex}", book_id, chunk, index, utc_now()),
-            )
+
+    background_tasks.add_task(process_uploaded_book, book_id, raw)
 
     return JSONResponse(
-        status_code=201,
+        status_code=202,
         content={
             "success": True,
             "book": {
                 "id": book_id,
                 "title": book_title,
                 "filename": file.filename,
-                "status": "ready",
-                "chunkCount": len(chunks),
+                "status": "processing",
+                "chunkCount": 0,
                 "error": None,
                 "createdAt": created,
             },
-            "message": f'Indexed "{book_title}" for this vault.',
+            "message": f'Started indexing "{book_title}" for this vault.',
         },
     )
 
@@ -479,6 +552,9 @@ def chat(
     if not payload.question.strip():
         raise HTTPException(status_code=400, detail="Question is required")
     owner = owner_key(reszvault_session, x_guest_id)
+    block_reason = chat_block_reason(owner, payload.bookId, payload.bookIds)
+    if block_reason:
+        raise HTTPException(status_code=409, detail=block_reason)
     books = load_books_for_chat(owner, payload.bookId, payload.bookIds)
     answer, sources_used = answer_question(payload.question, books)
     return {"success": True, "question": payload.question, "answer": answer, "sourcesUsed": sources_used}
@@ -493,6 +569,9 @@ def chat_stream(
     if not payload.question.strip():
         raise HTTPException(status_code=400, detail="Question is required")
     owner = owner_key(reszvault_session, x_guest_id)
+    block_reason = chat_block_reason(owner, payload.bookId, payload.bookIds)
+    if block_reason:
+        raise HTTPException(status_code=409, detail=block_reason)
     books = load_books_for_chat(owner, payload.bookId, payload.bookIds)
     answer, sources_used = answer_question(payload.question, books)
 
