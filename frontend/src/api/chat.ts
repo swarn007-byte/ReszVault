@@ -46,6 +46,9 @@ function toFriendlyChatError(message?: string): string {
   if (normalized.includes("failed to fetch") || normalized.includes("network")) {
     return "The chat service is not reachable right now. Please check the server and try again.";
   }
+  if (normalized.includes("still indexing") || normalized.includes("indexing to finish")) {
+    return message;
+  }
   return message;
 }
 

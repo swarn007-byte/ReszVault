@@ -29,9 +29,10 @@ type Props = {
   onSend: (text: string) => void;
   disabled?: boolean;
   autoFocus?: boolean;
+  placeholder?: string;
 };
 
-export function InputBar({ onSend, disabled, autoFocus }: Props) {
+export function InputBar({ onSend, disabled, autoFocus, placeholder }: Props) {
   const [value, setValue] = useState("");
   const [isListening, setIsListening] = useState(false);
   const [voiceError, setVoiceError] = useState<string | null>(null);
@@ -112,7 +113,7 @@ export function InputBar({ onSend, disabled, autoFocus }: Props) {
 
   return (
     <div className="min-w-0 w-full">
-      <div className="rounded-2xl border border-[#dfe2e7] bg-white shadow-[0_10px_28px_rgba(35,39,47,0.08)] transition-colors focus-within:border-[#c7ccd5]">
+      <div className="rounded-2xl border border-[#eadfd2] bg-white shadow-[0_10px_28px_rgba(35,39,47,0.08)] transition-colors focus-within:border-[#e8791a]">
         <div className="flex min-w-0 items-end gap-3 px-4 py-3">
           <textarea
             ref={ref}
@@ -126,7 +127,7 @@ export function InputBar({ onSend, disabled, autoFocus }: Props) {
             rows={1}
             autoFocus={autoFocus}
             disabled={disabled}
-            placeholder="Type your message here..."
+            placeholder={placeholder ?? "Type your message here..."}
             className="max-h-40 min-h-[36px] min-w-0 flex-1 resize-none bg-transparent px-1 py-1.5 text-[15px] leading-relaxed text-[#242731] placeholder:text-[#969ca6] focus:outline-none disabled:opacity-50"
           />
           <button
@@ -136,7 +137,7 @@ export function InputBar({ onSend, disabled, autoFocus }: Props) {
             className={`mb-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-xl transition ${
               isListening
                 ? "bg-[#242731] text-white"
-                : "bg-[#f1f3f6] text-[#7c828d] hover:bg-[#e8ebf0]"
+                : "bg-[#f7efe8] text-[#9a652b] hover:bg-[#f2e4d8]"
             } disabled:opacity-50`}
             aria-label={isListening ? "Stop voice input" : "Start voice input"}
             title={isListening ? "Stop voice input" : "Start voice input"}
@@ -154,7 +155,7 @@ export function InputBar({ onSend, disabled, autoFocus }: Props) {
             className={`mb-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-xl transition-all ${
               canSend
                 ? "bg-[#242731] text-white hover:bg-[#111318]"
-                : "bg-[#f1f3f6] text-[#9aa0aa]"
+                : "bg-[#f7efe8] text-[#b18b63]"
             }`}
             aria-label="Send"
           >

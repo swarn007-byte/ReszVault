@@ -53,6 +53,7 @@ export function AppShell() {
   const books = useBookStore((s) => s.books);
   const projectBookIds = useBookStore((s) => s.projectBookIds);
   const fetchBooks = useBookStore((s) => s.fetchBooks);
+  const uploading = useBookStore((s) => s.uploading);
   const [connectState, setConnectState] = useState<"idle" | "done">("idle");
   const scopedBooks = useMemo(() => {
     if (!activeProjectId) return books;
@@ -68,6 +69,33 @@ export function AppShell() {
       .filter((book) => book.status === "ready")
       .map((book) => book.id);
   }, [scopedBooks]);
+  const processingBooks = useMemo(
+    () => scopedBooks.filter((book) => book.status === "processing"),
+    [scopedBooks],
+  );
+  const failedBooks = useMemo(
+    () => scopedBooks.filter((book) => book.status === "failed"),
+    [scopedBooks],
+  );
+  const composerDisabled = isSending || uploading || processingBooks.length > 0;
+  const composerPlaceholder = processingBooks.length > 0
+    ? "Indexing your PDFs... chat unlocks when the vault is ready."
+    : uploading
+      ? "Uploading your PDF..."
+      : "Type your message here...";
+  const statusNotice = processingBooks.length > 0
+    ? {
+        title: "Vault indexing in progress",
+        detail: `ReszVault is preparing ${processingBooks.length} PDF${processingBooks.length === 1 ? "" : "s"} for retrieval. Wait a moment so answers use the full project context.`,
+        tone: "warning" as const,
+      }
+    : failedBooks.length > 0
+      ? {
+          title: "Some sources need attention",
+          detail: failedBooks[0]?.error ?? "One or more PDFs failed during indexing. Re-upload them before relying on the vault.",
+          tone: "error" as const,
+        }
+      : null;
   const isGuestRoute = location.pathname.startsWith("/guest");
   const chatBasePath = isGuestRoute ? "/guest" : "/app";
 
@@ -80,6 +108,14 @@ export function AppShell() {
   useEffect(() => {
     void fetchBooks(activeProjectId);
   }, [activeProjectId, fetchBooks]);
+
+  useEffect(() => {
+    if (!processingBooks.length) return;
+    const timer = window.setInterval(() => {
+      void fetchBooks(activeProjectId);
+    }, 2200);
+    return () => window.clearInterval(timer);
+  }, [activeProjectId, fetchBooks, processingBooks.length]);
 
   useEffect(() => {
     if (id) {
@@ -155,6 +191,15 @@ export function AppShell() {
     addMessage(chatId, { role: "user", content: text });
     const assistantId = addMessage(chatId, { role: "assistant", content: "" });
 
+    if (processingBooks.length > 0) {
+      setMessageContent(
+        chatId,
+        assistantId,
+        `Your vault is still indexing ${processingBooks.length} PDF${processingBooks.length === 1 ? "" : "s"}. Wait until indexing finishes so I can answer from the complete project context.`,
+      );
+      return;
+    }
+
     if (selectedBookIds.length === 0) {
       setMessageContent(
         chatId,
@@ -219,8 +264,8 @@ export function AppShell() {
   };
 
   return (
-    <div className="rv-chat-shell h-[100dvh] overflow-hidden bg-[#dfe3e9] p-0 text-[#242731]">
-      <div className="mx-auto flex h-full w-full overflow-hidden bg-[#f7f8fa]">
+    <div className="rv-chat-shell h-[100dvh] overflow-hidden bg-[#e8eaee] p-0 text-[#242731]">
+      <div className="mx-auto flex h-full w-full overflow-hidden bg-[#f8f7f5]">
         {/* Desktop sidebar */}
         <div className="hidden md:flex">
           <Sidebar activeChatId={activeChatId} />
@@ -255,11 +300,11 @@ export function AppShell() {
 
         {/* Main */}
         <main className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <header className="flex min-h-[92px] shrink-0 items-center gap-4 border-b border-[#eceef2] bg-white px-5 md:px-9">
+        <header className="flex min-h-[92px] shrink-0 items-center gap-4 border-b border-[#e7ddd2] bg-[#fffdfa] px-5 md:px-9">
           <button
             type="button"
             onClick={() => setSidebarOpen(true)}
-            className="rounded-lg p-2 text-[#6f7480] hover:bg-[#f1f3f6] md:hidden"
+            className="rounded-lg p-2 text-[#6f7480] hover:bg-[#f4eee8] md:hidden"
             aria-label="Open menu"
           >
             <svg
@@ -286,7 +331,7 @@ export function AppShell() {
                   : "ReszVault"}
               </p>
             </div>
-            <p className="mt-0.5 truncate text-sm text-[#6e737d]">
+            <p className="mt-0.5 truncate text-sm text-[#7a7268]">
               Source-grounded workspace
             </p>
           </div>
@@ -294,7 +339,7 @@ export function AppShell() {
             <button
               type="button"
               onClick={handleConnectVault}
-              className="hidden h-11 items-center gap-2 rounded-xl border border-[#e4e6eb] bg-white px-4 text-sm font-semibold text-[#4d535f] transition hover:bg-[#f8f9fb] sm:inline-flex"
+              className="hidden h-11 items-center gap-2 rounded-xl border border-[#ead9c8] bg-[#fffdfa] px-4 text-sm font-semibold text-[#5d5144] transition hover:border-[#e8791a] hover:bg-[#fff7ef] sm:inline-flex"
               aria-label="Connect Obsidian"
             >
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
@@ -308,12 +353,20 @@ export function AppShell() {
 
         <section className="min-h-0 min-w-0 flex-1">
           {showEmpty && !isSending ? (
-            <EmptyState onSend={handleSend} disabled={isSending} />
+            <EmptyState
+              onSend={handleSend}
+              disabled={composerDisabled}
+              placeholder={composerPlaceholder}
+              statusNotice={statusNotice}
+            />
           ) : activeChat ? (
             <ChatWindow
               chat={activeChat}
               onSend={handleSend}
               isSending={isSending}
+              disabled={composerDisabled}
+              placeholder={composerPlaceholder}
+              statusNotice={statusNotice}
               streamingMessageId={
                 isSending
                   ? activeChat.messages[activeChat.messages.length - 1]?.id
@@ -321,7 +374,12 @@ export function AppShell() {
               }
             />
           ) : (
-            <EmptyState onSend={handleSend} disabled={isSending} />
+            <EmptyState
+              onSend={handleSend}
+              disabled={composerDisabled}
+              placeholder={composerPlaceholder}
+              statusNotice={statusNotice}
+            />
           )}
         </section>
         </main>

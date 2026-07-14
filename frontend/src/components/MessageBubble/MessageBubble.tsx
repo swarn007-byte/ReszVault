@@ -23,7 +23,7 @@ export function MessageBubble({ message, isStreaming }: Props) {
         />
       )}
       {isUser ? (
-        <div className="min-w-0 max-w-[86%] overflow-hidden break-words rounded-[18px] bg-[#e9ecf1] px-4 py-3 text-[15px] leading-relaxed text-[#242731] md:max-w-[70%]">
+        <div className="min-w-0 max-w-[86%] overflow-hidden break-words rounded-[18px] border border-[#eadfd2] bg-[#fff8f1] px-4 py-3 text-[15px] leading-relaxed text-[#242731] md:max-w-[70%]">
           {message.content}
         </div>
       ) : message.content ? (
@@ -52,7 +52,7 @@ export function MessageBubble({ message, isStreaming }: Props) {
                   );
                 return (
                   <code
-                    className="rounded bg-[#e9ecf1] px-1.5 py-0.5 font-mono text-[12px] text-[#d86f1c]"
+                    className="rounded bg-[#f6ede5] px-1.5 py-0.5 font-mono text-[12px] text-[#b8651f]"
                     {...props}
                   >
                     {children}
