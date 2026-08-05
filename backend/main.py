@@ -20,7 +20,7 @@ from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel
 
 from document_parser import split_pdf_text
-from rag import BookContext, answer_question
+from rag import BookContext, answer_question, index_chunk_terms
 from storage import UPLOAD_DIR, db, init_db, row_to_dict, utc_now
 
 
@@ -215,15 +215,26 @@ def load_books_for_chat(
     with db() as conn:
         for row in rows:
             chunks = conn.execute(
-                "SELECT content FROM chunks WHERE book_id = ? ORDER BY chunk_index",
+                "SELECT content, search_terms FROM chunks WHERE book_id = ? ORDER BY chunk_index",
                 (row["id"],),
             ).fetchall()
+            contents = [chunk["content"] for chunk in chunks]
+            term_sets: list[set[str]] = []
+            for chunk in chunks:
+                if chunk["search_terms"]:
+                    try:
+                        term_sets.append(set(json.loads(chunk["search_terms"])))
+                        continue
+                    except (TypeError, json.JSONDecodeError):
+                        pass
+                term_sets.append(index_chunk_terms(chunk["content"]))
 
             books.append(
                 BookContext(
                     id=row["id"],
                     title=row["title"],
-                    chunks=[chunk["content"] for chunk in chunks],
+                    chunks=contents,
+                    chunk_terms=term_sets,
                 )
             )
 
@@ -261,8 +272,15 @@ def process_uploaded_book(book_id: str, pdf_bytes: bytes) -> None:
             conn.execute("DELETE FROM chunks WHERE book_id = ?", (book_id,))
             for index, chunk in enumerate(chunks):
                 conn.execute(
-                    "INSERT INTO chunks (id, book_id, content, chunk_index, created_at) VALUES (?, ?, ?, ?, ?)",
-                    (f"chunk_{uuid.uuid4().hex}", book_id, chunk, index, utc_now()),
+                    "INSERT INTO chunks (id, book_id, content, search_terms, chunk_index, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                    (
+                        f"chunk_{uuid.uuid4().hex}",
+                        book_id,
+                        chunk,
+                        json.dumps(sorted(index_chunk_terms(chunk))),
+                        index,
+                        utc_now(),
+                    ),
                 )
             conn.execute(
                 "UPDATE books SET status = ?, chunk_count = ?, error = ? WHERE id = ?",

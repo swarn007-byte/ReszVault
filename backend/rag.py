@@ -15,7 +15,7 @@ MISSING_REPLY = "I could not find that in the uploaded sources."
 COMMON_STOP_TERMS = {
     "what", "which", "tell", "give", "show", "from", "with", "this", "that", "have",
     "about", "your", "their", "there", "whose", "owner", "document", "documents",
-    "source", "sources", "pdf", "pdfs", "vault", "project", "please",
+    "source", "sources", "pdf", "pdfs", "vault", "project", "please", "resume",
 }
 
 
@@ -24,6 +24,7 @@ class BookContext:
     id: str
     title: str
     chunks: list[str]
+    chunk_terms: list[set[str]] | None = None
 
 
 def tokenize(text: str) -> list[str]:
@@ -36,6 +37,10 @@ def tokenize(text: str) -> list[str]:
 
 def normalized_terms(text: str) -> set[str]:
     return {term for term in tokenize(text) if term not in COMMON_STOP_TERMS}
+
+
+def index_chunk_terms(chunk: str) -> set[str]:
+    return normalized_terms(chunk)
 
 
 def is_clearly_off_topic(question: str) -> bool:
@@ -51,6 +56,9 @@ def is_clearly_off_topic(question: str) -> bool:
 
 
 def wants_source_inventory(question: str) -> bool:
+    compact = question.strip().lower()
+    if compact in {"source", "sources", "resource", "resources", "pdf", "pdfs", "docs", "documents"}:
+        return True
     if re.search(r"\b(not described|missing|not present|not included|not found)\b", question, re.I):
         return False
     return bool(
@@ -71,7 +79,7 @@ def wants_full_list(question: str) -> bool:
 def is_fact_query(question: str) -> bool:
     return bool(
         re.search(
-            r"\b(name|owner name|full name|candidate name|dob|date of birth|birth|email|mail|phone|mobile|number|address|college|cgpa)\b",
+            r"\b(name|owner name|full name|candidate name|dob|date of birth|birth|email|mail|phone|mobile|number|address|location|college|cgpa|gpa)\b",
             question,
             re.I,
         )
@@ -93,6 +101,12 @@ def expand_query_terms(question: str) -> set[str]:
         terms.update({"dob", "birth", "date"})
     if re.search(r"\b(college|education|cgpa)\b", q):
         terms.update({"college", "education", "cgpa", "technology", "galgotia"})
+    if re.search(r"\b(gpa)\b", q):
+        terms.update({"gpa", "cgpa", "education"})
+    if re.search(r"\b(project|projects)\b", q):
+        terms.update({"project", "projects", "reszvault", "ovisionmcp", "algolens"})
+    if re.search(r"\b(skill|skills)\b", q):
+        terms.update({"skills", "languages", "frameworks", "cloud", "database"})
     return terms
 
 
@@ -113,7 +127,12 @@ def sentence_score(sentence: str, terms: set[str]) -> float:
     return overlap + dense_bonus + phrase_bonus
 
 
-def retrieve_chunks(chunks: list[str], question: str, force_all: bool = False) -> list[str]:
+def retrieve_chunks(
+    chunks: list[str],
+    question: str,
+    force_all: bool = False,
+    chunk_terms: list[set[str]] | None = None,
+) -> list[str]:
     if force_all:
         return chunks[:40]
     terms = expand_query_terms(question)
@@ -121,15 +140,14 @@ def retrieve_chunks(chunks: list[str], question: str, force_all: bool = False) -
         return []
 
     scored: list[tuple[float, str]] = []
-    for chunk in chunks:
-        chunk_terms = normalized_terms(chunk)
-        if not chunk_terms:
+    for index, chunk in enumerate(chunks):
+        indexed_terms = chunk_terms[index] if chunk_terms and index < len(chunk_terms) else normalized_terms(chunk)
+        if not indexed_terms:
             continue
-        overlap = len(chunk_terms & terms)
+        overlap = len(indexed_terms & terms)
         if overlap == 0:
             continue
-        phrase_bonus = 0.75 if any(term in chunk.lower() for term in terms) else 0.0
-        score = overlap + phrase_bonus + (overlap / max(1, len(chunk_terms) ** 0.5))
+        score = overlap + (overlap / max(1, len(indexed_terms) ** 0.5))
         scored.append((score, chunk))
 
     scored.sort(key=lambda item: item[0], reverse=True)
@@ -195,11 +213,21 @@ def extract_direct_fact(question: str, books: list[BookContext]) -> str | None:
                 return f"The date of birth in **{book.title}** is **{match.group(1)}**."
 
         if re.search(r"\b(address|location)\b", lower):
-            match = re.search(r"(Address\s*:?\s*[^.]{20,180})", compact, re.I)
+            match = re.search(r"(Address\s*:?\s*[^.]{20,140}?)(?:VID|$)", compact, re.I)
             if match:
-                return f"The address in **{book.title}** is: {match.group(1).strip()}."
+                address = re.sub(r"\s+\d{4}\s+\d{4}\s+\d{4,}\s*$", "", match.group(1)).strip(" .,:")
+                return f"The address in **{book.title}** is: {address}."
 
-        if re.search(r"\b(college|education|cgpa)\b", lower):
+        if re.search(r"\b(cgpa|gpa)\b", lower):
+            match = re.search(r"CGPA[:\s-]*([0-9]+(?:\.[0-9]+)?)", compact, re.I)
+            if match:
+                cgpa = match.group(1)
+                if "." in cgpa and len(cgpa.split(".", 1)[1]) > 2:
+                    whole, frac = cgpa.split(".", 1)
+                    cgpa = f"{whole}.{frac[:1]}"
+                return f"The CGPA in **{book.title}** is **{cgpa}**."
+
+        if re.search(r"\b(college|education)\b", lower):
             sentences = split_sentences(compact)
             ranked = sorted(
                 ((sentence_score(sentence, expand_query_terms(question)), sentence) for sentence in sentences),
@@ -208,6 +236,16 @@ def extract_direct_fact(question: str, books: list[BookContext]) -> str | None:
             picked = [sentence for score, sentence in ranked if score >= 1.1][:2]
             if picked:
                 return f"From **{book.title}**:\n- " + "\n- ".join(picked)
+
+        if re.search(r"\b(project|projects)\b", lower):
+            sentences = split_sentences(compact)
+            ranked = sorted(
+                ((sentence_score(sentence, expand_query_terms(question)), sentence) for sentence in sentences),
+                reverse=True,
+            )
+            picked = [sentence for score, sentence in ranked if score >= 1.0][:4]
+            if picked:
+                return f"Projects mentioned in **{book.title}**:\n- " + "\n- ".join(picked)
 
     return None
 
@@ -230,7 +268,7 @@ def prepare_context(question: str, books: list[BookContext]) -> tuple[str, int] 
     context_parts = [f"Available source documents: {', '.join(book.title for book in books)}"]
     used = 0
     for book in books:
-        picked = retrieve_chunks(book.chunks, question, force_all=force_all)
+        picked = retrieve_chunks(book.chunks, question, force_all=force_all, chunk_terms=book.chunk_terms)
         used += len(picked)
         context_parts.extend(source_chunks(book.title, picked))
 
@@ -297,7 +335,12 @@ def extractive_answer(question: str, books: list[BookContext]) -> str:
     terms = expand_query_terms(question)
     ranked_sentences: list[tuple[float, str, str]] = []
     for book in books:
-        picked = retrieve_chunks(book.chunks, question, force_all=wants_full_list(question))
+        picked = retrieve_chunks(
+            book.chunks,
+            question,
+            force_all=wants_full_list(question),
+            chunk_terms=book.chunk_terms,
+        )
         if not picked:
             continue
         for sentence in split_sentences(compact_text(" ".join(picked), 900)):

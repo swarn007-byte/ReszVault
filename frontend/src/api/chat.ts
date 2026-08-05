@@ -75,17 +75,25 @@ export async function streamQuestion(
   options?: { bookId?: string | null; bookIds?: string[]; signal?: AbortSignal },
 ): Promise<void> {
   const { bookId, bookIds, signal } = options ?? {};
-  const res = await fetch(`${getApiBase()}/chat/stream`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "x-guest-id": getGuestId() },
-    credentials: "include",
-    body: JSON.stringify({
-      question,
-      ...(bookId ? { bookId } : {}),
-      ...(bookIds?.length ? { bookIds } : {}),
-    }),
-    signal,
-  });
+  let res: globalThis.Response;
+  try {
+    res = await fetch(`${getApiBase()}/chat/stream`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-guest-id": getGuestId() },
+      credentials: "include",
+      body: JSON.stringify({
+        question,
+        ...(bookId ? { bookId } : {}),
+        ...(bookIds?.length ? { bookIds } : {}),
+      }),
+      signal,
+    });
+  } catch (error) {
+    callbacks.onError?.(
+      toFriendlyChatError(error instanceof Error ? error.message : "Failed to fetch"),
+    );
+    return;
+  }
 
   if (!res.ok) {
     const body = (await res.json().catch(() => ({}))) as { error?: string; details?: string };
@@ -104,39 +112,45 @@ export async function streamQuestion(
   const decoder = new TextDecoder();
   let buffer = "";
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
 
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("\n");
-    buffer = lines.pop() ?? "";
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
 
-    for (const line of lines) {
-      if (!line.startsWith("data: ")) continue;
-      const raw = line.slice(6).trim();
-      if (!raw) continue;
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue;
+        const raw = line.slice(6).trim();
+        if (!raw) continue;
 
-      let payload: SsePayload;
-      try {
-        payload = JSON.parse(raw) as SsePayload;
-      } catch {
-        continue;
-      }
+        let payload: SsePayload;
+        try {
+          payload = JSON.parse(raw) as SsePayload;
+        } catch {
+          continue;
+        }
 
-      if (payload.error) {
-        callbacks.onError?.(toFriendlyChatError(payload.error));
-        return;
-      }
-      if (payload.token) callbacks.onToken(payload.token);
-      if (payload.replace && payload.answer) callbacks.onReplace?.(payload.answer);
-      if (payload.done) {
-        callbacks.onDone?.({
-          sourcesUsed: payload.sourcesUsed ?? 0,
-          answer: payload.answer,
-        });
+        if (payload.error) {
+          callbacks.onError?.(toFriendlyChatError(payload.error));
+          return;
+        }
+        if (payload.token) callbacks.onToken(payload.token);
+        if (payload.replace && payload.answer) callbacks.onReplace?.(payload.answer);
+        if (payload.done) {
+          callbacks.onDone?.({
+            sourcesUsed: payload.sourcesUsed ?? 0,
+            answer: payload.answer,
+          });
+        }
       }
     }
+  } catch (error) {
+    callbacks.onError?.(
+      toFriendlyChatError(error instanceof Error ? error.message : "The chat stream was interrupted."),
+    );
   }
 }
 

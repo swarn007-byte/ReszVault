@@ -81,6 +81,12 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_chunks_book ON chunks(book_id, chunk_index);
             """
         )
+        columns = {
+            row["name"]
+            for row in conn.execute("PRAGMA table_info(chunks)").fetchall()
+        }
+        if "search_terms" not in columns:
+            conn.execute("ALTER TABLE chunks ADD COLUMN search_terms TEXT")
 
 
 def row_to_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:
