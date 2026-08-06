@@ -2671,8 +2671,11 @@ textarea {
     min-height: 0;
     border-radius: 16px;
     border: 1px solid #dfe3e8;
-    background: #ffffff;
-    box-shadow: 0 20px 54px rgba(36, 42, 54, 0.14);
+    background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.96), #ffffff),
+        #ffffff;
+    box-shadow: 0 22px 60px rgba(36, 42, 54, 0.16);
+    will-change: transform, opacity;
 }
 
 .rv-auth-card {
@@ -2699,13 +2702,51 @@ textarea {
 }
 
 .rv-auth-tabs {
+    position: relative;
     margin-top: 14px;
     padding: 3px;
+    overflow: hidden;
 }
 
 .rv-auth-tabs button {
+    position: relative;
+    z-index: 1;
     padding: 8px 10px;
     font-size: 12px;
+    transition: color 180ms ease, transform 180ms ease;
+}
+
+.rv-auth-tabs button:focus {
+    outline: none;
+}
+
+.rv-auth-tabs button:focus-visible,
+.rv-social-grid button:focus-visible,
+.rv-auth-submit:focus-visible,
+.rv-auth-back:focus-visible,
+.rv-auth-guest:focus-visible {
+    outline: none;
+    box-shadow:
+        0 0 0 3px rgba(36, 39, 49, 0.08),
+        0 0 0 1px rgba(36, 39, 49, 0.16);
+}
+
+.rv-auth-tab-indicator {
+    position: absolute;
+    inset: 3px auto 3px 3px;
+    width: calc(50% - 3px);
+    border-radius: 8px;
+    background: #ffffff;
+    box-shadow: 0 6px 18px rgba(24, 28, 36, 0.08);
+    transition: transform 260ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.rv-auth-tab-indicator[data-mode="sign-up"] {
+    transform: translateX(100%);
+}
+
+.rv-auth-tabs button[aria-selected="true"] {
+    background: transparent;
 }
 
 .rv-social-grid {
@@ -2718,6 +2759,11 @@ textarea {
     border-radius: 10px;
     padding: 10px 12px;
     font-size: 13px;
+    transition:
+        background 180ms ease,
+        border-color 180ms ease,
+        box-shadow 180ms ease,
+        transform 180ms ease;
 }
 
 .rv-auth-divider {
@@ -2742,15 +2788,65 @@ textarea {
     border-radius: 10px;
     padding: 10px 12px;
     font-size: 13px;
+    transition:
+        border-color 180ms ease,
+        box-shadow 180ms ease,
+        background 180ms ease;
 }
 
 .rv-auth-submit,
 .rv-auth-back,
 .rv-auth-guest {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
     min-height: 40px;
     border-radius: 10px;
     padding: 10px 12px;
     font-size: 13px;
+    transition:
+        background 180ms ease,
+        border-color 180ms ease,
+        box-shadow 180ms ease,
+        color 180ms ease,
+        transform 180ms ease;
+}
+
+.rv-auth-submit:hover:not(:disabled),
+.rv-auth-back:hover,
+.rv-auth-guest:hover,
+.rv-social-grid button:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 12px 26px rgba(36, 42, 54, 0.1);
+}
+
+.rv-auth-submit:active:not(:disabled),
+.rv-auth-back:active,
+.rv-auth-guest:active,
+.rv-social-grid button:active:not(:disabled) {
+    transform: translateY(0);
+}
+
+.rv-social-grid button:disabled,
+.rv-auth-submit:disabled {
+    cursor: not-allowed;
+    opacity: 0.68;
+}
+
+.rv-auth-spinner {
+    width: 15px;
+    height: 15px;
+    border: 2px solid rgba(36, 39, 49, 0.18);
+    border-top-color: #242731;
+    border-radius: 999px;
+    animation: rv-auth-spin 780ms linear infinite;
+}
+
+@keyframes rv-auth-spin {
+    to {
+        transform: rotate(360deg);
+    }
 }
 
 .rv-auth-secondary-actions {

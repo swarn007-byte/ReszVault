@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { AnimatePresence, motion } from "framer-motion";
 import { Link, Navigate, useNavigate } from "react-router-dom";
 import { authClient, useSession } from "../lib/auth-client";
 
@@ -101,7 +102,12 @@ export function AuthPage() {
         <strong>reszvault</strong>
       </Link>
 
-      <section className="rv-auth-stage">
+      <motion.section
+        className="rv-auth-stage"
+        initial={{ opacity: 0, y: 18, scale: 0.985 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        transition={{ duration: 0.38, ease: [0.22, 1, 0.36, 1] }}
+      >
         <section className="rv-auth-card">
           <div className="rv-auth-card-head">
             <span>{isSignUp ? "Create account" : "Authentication"}</span>
@@ -114,6 +120,7 @@ export function AuthPage() {
           </div>
 
           <div className="rv-auth-tabs" role="tablist" aria-label="Authentication mode">
+            <i className="rv-auth-tab-indicator" data-mode={mode} aria-hidden="true" />
             <button
               type="button"
               aria-selected={!isSignUp}
@@ -137,7 +144,12 @@ export function AuthPage() {
           </div>
 
           <div className="rv-social-grid">
-            <button type="button" disabled={loading} onClick={() => handleSocial("google")}>
+            <button
+              type="button"
+              disabled={loading || !providers.google}
+              onClick={() => handleSocial("google")}
+              title={providers.google ? "Continue with Google" : "Google login is not configured"}
+            >
               <GoogleMark />
               Google
             </button>
@@ -150,19 +162,27 @@ export function AuthPage() {
           </div>
 
           <form className="rv-auth-form" onSubmit={handleSubmit}>
-            {isSignUp && (
-              <label>
-                Full name
-                <input
-                  type="text"
-                  required
-                  value={name}
-                  onChange={(event) => setName(event.target.value)}
-                  placeholder="Swarn"
-                  autoComplete="name"
-                />
-              </label>
-            )}
+            <AnimatePresence initial={false} mode="popLayout">
+              {isSignUp && (
+                <motion.label
+                  key="name"
+                  initial={{ opacity: 0, height: 0, y: -8 }}
+                  animate={{ opacity: 1, height: "auto", y: 0 }}
+                  exit={{ opacity: 0, height: 0, y: -8 }}
+                  transition={{ duration: 0.22, ease: "easeOut" }}
+                >
+                  Full name
+                  <input
+                    type="text"
+                    required
+                    value={name}
+                    onChange={(event) => setName(event.target.value)}
+                    placeholder="Swarn"
+                    autoComplete="name"
+                  />
+                </motion.label>
+              )}
+            </AnimatePresence>
 
             <label>
               Email address
@@ -192,6 +212,7 @@ export function AuthPage() {
             {error && <p className="rv-auth-error" role="alert">{error}</p>}
 
             <button className="rv-auth-submit" type="submit" disabled={loading}>
+              {loading && <span className="rv-auth-spinner" aria-hidden="true" />}
               {loading
                 ? isSignUp
                   ? "Creating account..."
@@ -212,7 +233,7 @@ export function AuthPage() {
             </button>
           </div>
         </section>
-      </section>
+      </motion.section>
     </main>
   );
 }
