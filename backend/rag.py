@@ -1,22 +1,39 @@
+"""
+RAG core for a multi-PDF question-answering app.
+
+Requires:
+    pip install sentence-transformers numpy
+
+Design:
+- Ingestion (elsewhere, in document_parser.py): PDFs -> text -> chunks.
+- This file: embed chunks once per book, embed each question, retrieve by
+  cosine similarity across ALL uploaded books (not per-book keyword loops),
+  then ask an LLM to answer strictly from the retrieved context.
+"""
+
 from __future__ import annotations
 
 import json
 import os
 import re
 import urllib.request
-from dataclasses import dataclass
-from typing import Iterable
+from dataclasses import dataclass, field
+from functools import lru_cache
+
+import numpy as np
 
 from document_parser import compact_text, source_chunks
 
 
-OFF_TOPIC_REPLY = "ahn !! my mother didn't taught me about this"
 MISSING_REPLY = "I could not find that in the uploaded sources."
-COMMON_STOP_TERMS = {
-    "what", "which", "tell", "give", "show", "from", "with", "this", "that", "have",
-    "about", "your", "their", "there", "whose", "owner", "document", "documents",
-    "source", "sources", "pdf", "pdfs", "vault", "project", "please", "resume",
-}
+NO_BOOKS_REPLY = "Upload one or more PDFs first, then I can answer from your sources."
+
+EMBED_MODEL_NAME = os.getenv("RAG_EMBED_MODEL", "all-MiniLM-L6-v2")
+TOP_K = 6
+# Cosine similarity floor (embeddings are normalized, so this is a dot product).
+# Chunks scoring below this are treated as not actually relevant -- this is
+# what replaces the old hardcoded off-topic keyword blocklist.
+MIN_SIMILARITY = 0.30
 
 
 @dataclass
@@ -24,36 +41,107 @@ class BookContext:
     id: str
     title: str
     chunks: list[str]
-    chunk_terms: list[set[str]] | None = None
+    chunk_embeddings: np.ndarray | None = field(default=None, repr=False)
 
 
-def tokenize(text: str) -> list[str]:
+@dataclass
+class ContextResult:
+    """
+    Output of prepare_context().
+
+    is_final_answer=True means `text` should be returned to the user as-is
+    (no LLM call needed) -- e.g. "no PDFs uploaded", a source list, or
+    "nothing relevant found". is_final_answer=False means `text` is context
+    to feed into the LLM prompt.
+    """
+    text: str
+    used_chunks: int
+    is_final_answer: bool = False
+
+
+# ---------------------------------------------------------------------------
+# Embeddings
+# ---------------------------------------------------------------------------
+
+@lru_cache(maxsize=1)
+def _get_embedder():
+    """Load the embedding model once per process (lazy, so import stays cheap)."""
+    from sentence_transformers import SentenceTransformer
+    return SentenceTransformer(EMBED_MODEL_NAME)
+
+
+def embed_texts(texts: list[str]) -> np.ndarray:
+    """Embed a list of strings into normalized vectors (cosine sim = dot product)."""
+    if not texts:
+        return np.zeros((0, 384), dtype=np.float32)
+    model = _get_embedder()
+    vectors = model.encode(texts, normalize_embeddings=True, convert_to_numpy=True)
+    return vectors.astype(np.float32)
+
+
+def ensure_book_embeddings(book: BookContext) -> None:
+    """Compute and cache chunk embeddings for a book if not already done."""
+    if book.chunk_embeddings is not None and len(book.chunk_embeddings) == len(book.chunks):
+        return
+    book.chunk_embeddings = embed_texts(book.chunks)
+
+
+def cosine_scores(query_vec: np.ndarray, chunk_vecs: np.ndarray) -> np.ndarray:
+    if chunk_vecs.shape[0] == 0:
+        return np.zeros((0,), dtype=np.float32)
+    return chunk_vecs @ query_vec  # already normalized -> dot product == cosine sim
+
+
+# ---------------------------------------------------------------------------
+# Retrieval
+# ---------------------------------------------------------------------------
+
+def retrieve_chunks(
+    book: BookContext,
+    query_vec: np.ndarray,
+    force_all: bool = False,
+    top_k: int = TOP_K,
+) -> list[tuple[float, str]]:
+    """Top-k (score, chunk) pairs for a single book."""
+    if force_all:
+        return [(1.0, chunk) for chunk in book.chunks[:40]]
+
+    ensure_book_embeddings(book)
+    scores = cosine_scores(query_vec, book.chunk_embeddings)
+    if scores.shape[0] == 0:
+        return []
+    ranked_indices = np.argsort(-scores)[:top_k]
     return [
-        word
-        for word in re.sub(r"[^a-z0-9\s]", " ", text.lower()).split()
-        if len(word) > 2
+        (float(scores[i]), book.chunks[i])
+        for i in ranked_indices
+        if scores[i] >= MIN_SIMILARITY
     ]
 
 
-def normalized_terms(text: str) -> set[str]:
-    return {term for term in tokenize(text) if term not in COMMON_STOP_TERMS}
+def retrieve_across_books(
+    question: str,
+    books: list[BookContext],
+    force_all: bool = False,
+    top_k: int = TOP_K,
+) -> list[tuple[float, str, str]]:
+    """Retrieve top chunks ranked GLOBALLY across all books. Returns (score, title, chunk)."""
+    query_vec = embed_texts([question])[0]
+    pooled: list[tuple[float, str, str]] = []
+    for book in books:
+        for score, chunk in retrieve_chunks(book, query_vec, force_all=force_all, top_k=top_k):
+            pooled.append((score, book.title, chunk))
+    pooled.sort(key=lambda item: item[0], reverse=True)
+    return pooled if force_all else pooled[:top_k]
 
 
-def index_chunk_terms(chunk: str) -> set[str]:
-    return normalized_terms(chunk)
+def split_sentences(text: str) -> list[str]:
+    parts = re.split(r"(?<=[.!?])\s+|\s+[•◦–-]\s+", re.sub(r"\s+", " ", text).strip())
+    return [part.strip() for part in parts if len(part.strip()) > 8]
 
 
-def is_clearly_off_topic(question: str) -> bool:
-    if re.search(r"\b(reszvault|research|document|pdf|source|citation|summary|paper|report|resume|vault|dsa|question)\b", question, re.I):
-        return False
-    return bool(
-        re.search(
-            r"\b(israel|gaza|trump|biden|modi|putin|election|president|crypto|bitcoin|weather|recipe|football|nba|iphone|android)\b",
-            question,
-            re.I,
-        )
-    )
-
+# ---------------------------------------------------------------------------
+# Question intent (kept: these classify the QUESTION, not hardcoded document facts)
+# ---------------------------------------------------------------------------
 
 def wants_source_inventory(question: str) -> bool:
     compact = question.strip().lower()
@@ -69,7 +157,10 @@ def wants_source_inventory(question: str) -> bool:
 
 
 def wants_project_summary(question: str) -> bool:
-    return bool(re.search(r"\b(summarize|summary|overview)\b", question, re.I) and re.search(r"\b(project|vault|all|sources|documents|docs)\b", question, re.I))
+    return bool(
+        re.search(r"\b(summarize|summary|overview)\b", question, re.I)
+        and re.search(r"\b(project|vault|all|sources|documents|docs)\b", question, re.I)
+    )
 
 
 def wants_full_list(question: str) -> bool:
@@ -79,81 +170,16 @@ def wants_full_list(question: str) -> bool:
 def is_fact_query(question: str) -> bool:
     return bool(
         re.search(
-            r"\b(name|owner name|full name|candidate name|dob|date of birth|birth|email|mail|phone|mobile|number|address|location|college|cgpa|gpa)\b",
+            r"\b(name|owner name|full name|dob|date of birth|birth|email|mail|phone|mobile|number|address|location|college|cgpa|gpa)\b",
             question,
             re.I,
         )
     )
 
 
-def expand_query_terms(question: str) -> set[str]:
-    terms = normalized_terms(question)
-    q = question.lower()
-    if "owner name" in q or "full name" in q or re.search(r"\bname\b", q):
-        terms.update({"name", "swarn", "shekhar", "issued", "summary", "candidate"})
-    if re.search(r"\b(email|mail)\b", q):
-        terms.update({"email", "gmail", "mail"})
-    if re.search(r"\b(phone|mobile|contact|number)\b", q):
-        terms.update({"phone", "mobile", "contact"})
-    if re.search(r"\b(address|location)\b", q):
-        terms.update({"address", "district", "state", "bihar"})
-    if re.search(r"\b(dob|date of birth|birth)\b", q):
-        terms.update({"dob", "birth", "date"})
-    if re.search(r"\b(college|education|cgpa)\b", q):
-        terms.update({"college", "education", "cgpa", "technology", "galgotia"})
-    if re.search(r"\b(gpa)\b", q):
-        terms.update({"gpa", "cgpa", "education"})
-    if re.search(r"\b(project|projects)\b", q):
-        terms.update({"project", "projects", "reszvault", "ovisionmcp", "algolens"})
-    if re.search(r"\b(skill|skills)\b", q):
-        terms.update({"skills", "languages", "frameworks", "cloud", "database"})
-    return terms
-
-
-def split_sentences(text: str) -> list[str]:
-    parts = re.split(r"(?<=[.!?])\s+|\s+[•◦–-]\s+", re.sub(r"\s+", " ", text).strip())
-    return [part.strip() for part in parts if len(part.strip()) > 8]
-
-
-def sentence_score(sentence: str, terms: set[str]) -> float:
-    sentence_terms = normalized_terms(sentence)
-    if not sentence_terms:
-        return 0.0
-    overlap = len(sentence_terms & terms)
-    if overlap == 0:
-        return 0.0
-    dense_bonus = overlap / max(1, len(sentence_terms) ** 0.5)
-    phrase_bonus = 0.25 if any(term in sentence.lower() for term in terms) else 0.0
-    return overlap + dense_bonus + phrase_bonus
-
-
-def retrieve_chunks(
-    chunks: list[str],
-    question: str,
-    force_all: bool = False,
-    chunk_terms: list[set[str]] | None = None,
-) -> list[str]:
-    if force_all:
-        return chunks[:40]
-    terms = expand_query_terms(question)
-    if not terms:
-        return []
-
-    scored: list[tuple[float, str]] = []
-    for index, chunk in enumerate(chunks):
-        indexed_terms = chunk_terms[index] if chunk_terms and index < len(chunk_terms) else normalized_terms(chunk)
-        if not indexed_terms:
-            continue
-        overlap = len(indexed_terms & terms)
-        if overlap == 0:
-            continue
-        score = overlap + (overlap / max(1, len(indexed_terms) ** 0.5))
-        scored.append((score, chunk))
-
-    scored.sort(key=lambda item: item[0], reverse=True)
-    picked = [chunk for score, chunk in scored[:6] if score >= 1.1]
-    return picked
-
+# ---------------------------------------------------------------------------
+# Context assembly
+# ---------------------------------------------------------------------------
 
 def extractive_project_summary(books: list[BookContext]) -> str:
     sections: list[str] = [
@@ -169,116 +195,36 @@ def extractive_project_summary(books: list[BookContext]) -> str:
     return "\n".join(sections).strip()
 
 
-def detect_name_candidates(text: str) -> list[str]:
-    matches = re.findall(r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})\b", text)
-    cleaned: list[str] = []
-    for match in matches:
-        normalized = re.sub(r"(vill|dist|state|address)$", "", match, flags=re.I).strip()
-        normalized = re.sub(r"\s{2,}", " ", normalized)
-        if len(normalized.split()) < 2:
-            continue
-        if normalized.lower() in {"portfolio github", "machine learning", "software engineering"}:
-            continue
-        if any(token in normalized.lower() for token in ("enrolment", "address", "summary", "education", "experience")):
-            continue
-        if normalized not in cleaned:
-            cleaned.append(normalized)
-    return cleaned
-
-
-def extract_direct_fact(question: str, books: list[BookContext]) -> str | None:
-    lower = question.lower()
-    for book in books:
-        text = " ".join(book.chunks)
-        compact = re.sub(r"\s+", " ", text)
-
-        if re.search(r"\b(owner name|full name|candidate name|name)\b", lower):
-            names = detect_name_candidates(compact)
-            if names:
-                return f"The name in **{book.title}** is **{names[0]}**."
-
-        if re.search(r"\b(email|mail)\b", lower):
-            match = re.search(r"([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})", compact)
-            if match:
-                return f"The email in **{book.title}** is **{match.group(1)}**."
-
-        if re.search(r"\b(phone|mobile|contact|number)\b", lower):
-            match = re.search(r"(\+91[-\s]?\d{10}|\b\d{10}\b)", compact)
-            if match:
-                return f"The phone number in **{book.title}** is **{match.group(1)}**."
-
-        if re.search(r"\b(dob|date of birth|birth)\b", lower):
-            match = re.search(r"\b(\d{2}/\d{2}/\d{4})\b", compact)
-            if match:
-                return f"The date of birth in **{book.title}** is **{match.group(1)}**."
-
-        if re.search(r"\b(address|location)\b", lower):
-            match = re.search(r"(Address\s*:?\s*[^.]{20,140}?)(?:VID|$)", compact, re.I)
-            if match:
-                address = re.sub(r"\s+\d{4}\s+\d{4}\s+\d{4,}\s*$", "", match.group(1)).strip(" .,:")
-                return f"The address in **{book.title}** is: {address}."
-
-        if re.search(r"\b(cgpa|gpa)\b", lower):
-            match = re.search(r"CGPA[:\s-]*([0-9]+(?:\.[0-9]+)?)", compact, re.I)
-            if match:
-                cgpa = match.group(1)
-                if "." in cgpa and len(cgpa.split(".", 1)[1]) > 2:
-                    whole, frac = cgpa.split(".", 1)
-                    cgpa = f"{whole}.{frac[:1]}"
-                return f"The CGPA in **{book.title}** is **{cgpa}**."
-
-        if re.search(r"\b(college|education)\b", lower):
-            sentences = split_sentences(compact)
-            ranked = sorted(
-                ((sentence_score(sentence, expand_query_terms(question)), sentence) for sentence in sentences),
-                reverse=True,
-            )
-            picked = [sentence for score, sentence in ranked if score >= 1.1][:2]
-            if picked:
-                return f"From **{book.title}**:\n- " + "\n- ".join(picked)
-
-        if re.search(r"\b(project|projects)\b", lower):
-            sentences = split_sentences(compact)
-            ranked = sorted(
-                ((sentence_score(sentence, expand_query_terms(question)), sentence) for sentence in sentences),
-                reverse=True,
-            )
-            picked = [sentence for score, sentence in ranked if score >= 1.0][:4]
-            if picked:
-                return f"Projects mentioned in **{book.title}**:\n- " + "\n- ".join(picked)
-
-    return None
-
-
-def prepare_context(question: str, books: list[BookContext]) -> tuple[str, int] | str:
+def prepare_context(question: str, books: list[BookContext]) -> ContextResult:
     if not books:
-        return "Upload one or more PDFs first, then I can answer from your sources."
+        return ContextResult(NO_BOOKS_REPLY, 0, is_final_answer=True)
 
     if wants_source_inventory(question):
-        return "\n".join(["Available source documents:", *[f"{i}. {book.title}" for i, book in enumerate(books, 1)]])
+        listing = "\n".join(["Available source documents:", *[f"{i}. {book.title}" for i, book in enumerate(books, 1)]])
+        return ContextResult(listing, len(books), is_final_answer=True)
 
     if wants_project_summary(question):
-        return extractive_project_summary(books)
-
-    direct_fact = extract_direct_fact(question, books)
-    if direct_fact:
-        return direct_fact
+        return ContextResult(extractive_project_summary(books), len(books), is_final_answer=True)
 
     force_all = wants_full_list(question)
-    context_parts = [f"Available source documents: {', '.join(book.title for book in books)}"]
-    used = 0
-    for book in books:
-        picked = retrieve_chunks(book.chunks, question, force_all=force_all, chunk_terms=book.chunk_terms)
-        used += len(picked)
-        context_parts.extend(source_chunks(book.title, picked))
+    results = retrieve_across_books(question, books, force_all=force_all)
 
-    if used == 0:
-        return MISSING_REPLY
-    return "\n\n".join(context_parts), used
+    if not results:
+        return ContextResult(MISSING_REPLY, 0, is_final_answer=True)
+
+    grouped: dict[str, list[str]] = {}
+    for _, title, chunk in results:
+        grouped.setdefault(title, []).append(chunk)
+
+    context_parts = [f"Available source documents: {', '.join(book.title for book in books)}"]
+    for title, chunks in grouped.items():
+        context_parts.extend(source_chunks(title, chunks))
+
+    return ContextResult("\n\n".join(context_parts), len(results), is_final_answer=False)
 
 
 def build_prompt(question: str, context: str) -> str:
-    return f"""You are ReszVault, a strict source-grounded research assistant.
+    return f"""You are a strict source-grounded research assistant.
 
 CORE RULES:
 1. Answer using ONLY the provided context. Do not use outside knowledge.
@@ -293,6 +239,10 @@ Context:
 Question: {question}
 """
 
+
+# ---------------------------------------------------------------------------
+# Generation
+# ---------------------------------------------------------------------------
 
 def groq_complete(prompt: str) -> str | None:
     api_key = os.getenv("GROQ_API_KEY")
@@ -325,53 +275,45 @@ def groq_complete(prompt: str) -> str | None:
 
 
 def extractive_answer(question: str, books: list[BookContext]) -> str:
-    if is_clearly_off_topic(question):
-        return OFF_TOPIC_REPLY
+    """Fallback used when no GROQ_API_KEY is set or the API call fails."""
+    result = prepare_context(question, books)
+    if result.is_final_answer:
+        return result.text
 
-    fixed_or_context = prepare_context(question, books)
-    if isinstance(fixed_or_context, str):
-        return fixed_or_context
+    force_all = wants_full_list(question)
+    results = retrieve_across_books(question, books, force_all=force_all)
 
-    terms = expand_query_terms(question)
-    ranked_sentences: list[tuple[float, str, str]] = []
-    for book in books:
-        picked = retrieve_chunks(
-            book.chunks,
-            question,
-            force_all=wants_full_list(question),
-            chunk_terms=book.chunk_terms,
-        )
-        if not picked:
-            continue
-        for sentence in split_sentences(compact_text(" ".join(picked), 900)):
-            score = sentence_score(sentence, terms)
-            if score >= 1.1:
-                ranked_sentences.append((score, book.title, sentence))
+    candidates: list[tuple[str, str]] = []  # (title, sentence)
+    for _, title, chunk in results:
+        for sentence in split_sentences(compact_text(chunk, 900)):
+            candidates.append((title, sentence))
 
-    ranked_sentences.sort(key=lambda item: item[0], reverse=True)
-    if not ranked_sentences:
+    if not candidates:
         return MISSING_REPLY
 
-    top = ranked_sentences[:3]
-    if is_fact_query(question):
-        return f"From **{top[0][1]}**: {top[0][2]}"
+    query_vec = embed_texts([question])[0]
+    sentence_vecs = embed_texts([sentence for _, sentence in candidates])
+    scores = cosine_scores(query_vec, sentence_vecs)
 
-    lines = [f"From **{title}**: {sentence}" for _, title, sentence in top]
+    ranked = sorted(zip(scores, candidates), key=lambda item: item[0], reverse=True)
+    top = [item for item in ranked if item[0] >= MIN_SIMILARITY][:3]
+    if not top:
+        return MISSING_REPLY
+
+    if is_fact_query(question):
+        _, (title, sentence) = top[0]
+        return f"From **{title}**: {sentence}"
+
+    lines = [f"From **{title}**: {sentence}" for _, (title, sentence) in top]
     return "\n- " + "\n- ".join(lines)
 
 
 def answer_question(question: str, books: list[BookContext]) -> tuple[str, int]:
-    if is_clearly_off_topic(question):
-        return OFF_TOPIC_REPLY, 0
+    result = prepare_context(question, books)
+    if result.is_final_answer:
+        return result.text, result.used_chunks
 
-    fixed_or_context = prepare_context(question, books)
-    if isinstance(fixed_or_context, str):
-        return fixed_or_context, len(books)
-
-    context, used = fixed_or_context
-    answer = groq_complete(build_prompt(question, context))
+    answer = groq_complete(build_prompt(question, result.text))
     if not answer:
         answer = extractive_answer(question, books)
-    if re.search(r"\b(i'?m a fool|am i fool)\b", answer, re.I):
-        answer = OFF_TOPIC_REPLY
-    return answer.strip(), used
+    return answer.strip(), result.used_chunks
