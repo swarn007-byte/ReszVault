@@ -16,7 +16,7 @@ import urllib.request
 
 from fastapi import BackgroundTasks, Cookie, FastAPI, File, Form, Header, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel
 
 from document_parser import Chunk, split_pdf_chunks
@@ -574,6 +574,23 @@ def delete_book(
     if row.get("file_path"):
         Path(row["file_path"]).unlink(missing_ok=True)
     return {"success": True}
+
+
+@app.get("/books/{book_id}/file")
+def read_book_file(
+    book_id: str,
+    x_guest_id: Annotated[str | None, Header(alias="x-guest-id")] = None,
+    reszvault_session: Annotated[str | None, Cookie(alias=SESSION_COOKIE)] = None,
+    x_session_token: Annotated[str | None, Header(alias="x-session-token")] = None,
+) -> FileResponse:
+    owner = owner_key(reszvault_session, x_guest_id, x_session_token)
+    if not owner:
+        raise HTTPException(status_code=401, detail="Sign in required")
+    with db() as conn:
+        row = conn.execute("SELECT file_path, filename FROM books WHERE id = ? AND owner_key = ?", (book_id, owner)).fetchone()
+    if not row or not row["file_path"] or not Path(row["file_path"]).is_file():
+        raise HTTPException(status_code=404, detail="PDF not found")
+    return FileResponse(row["file_path"], media_type="application/pdf", filename=row["filename"], content_disposition_type="inline")
 
 
 @app.post("/ingest")

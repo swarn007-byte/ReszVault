@@ -101,9 +101,9 @@ export async function streamQuestion(
   }
 
   if (!res.ok) {
-    const body = (await res.json().catch(() => ({}))) as { error?: string; details?: string };
+    const body = (await res.json().catch(() => ({}))) as { error?: string; details?: string; detail?: string };
     callbacks.onError?.(
-      toFriendlyChatError(body.details ?? body.error ?? `Request failed (${res.status})`),
+      toFriendlyChatError(body.detail ?? body.details ?? body.error ?? `Request failed (${res.status})`),
     );
     return;
   }

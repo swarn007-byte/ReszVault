@@ -25,13 +25,14 @@ async function booksFetch(path: string, init?: RequestInit) {
   const body = (await res.json().catch(() => ({}))) as {
     error?: string;
     details?: string;
+    detail?: string;
     books?: BookRecord[];
     book?: BookRecord;
     success?: boolean;
     message?: string;
   };
   if (!res.ok && res.status !== 202) {
-    throw new Error(body.details ?? body.error ?? `Request failed (${res.status})`);
+    throw new Error(body.detail ?? body.details ?? body.error ?? `Request failed (${res.status})`);
   }
   return body;
 }
@@ -64,4 +65,13 @@ export async function getBook(id: string): Promise<BookRecord | null> {
 
 export async function deleteBook(id: string): Promise<void> {
   await booksFetch(`/books/${id}`, { method: "DELETE" });
+}
+
+export async function getBookFile(id: string): Promise<Blob> {
+  const response = await fetch(`${getApiBase()}/books/${encodeURIComponent(id)}/file`, {
+    credentials: "include",
+    headers: { "x-guest-id": getGuestId(), "x-session-token": getSessionToken() },
+  });
+  if (!response.ok) throw new Error("Could not open this PDF. Try uploading it again.");
+  return response.blob();
 }

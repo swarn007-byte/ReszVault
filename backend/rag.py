@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import logging
 import urllib.request
 from dataclasses import dataclass, field
 from functools import lru_cache
@@ -133,6 +134,19 @@ def bm25_scores(query: str, book: BookContext) -> np.ndarray:
     return scores.astype(np.float32)
 
 
+def lexical_scores(question: str, texts: list[str]) -> np.ndarray:
+    """Local source matching when the embedding model cannot be loaded.
+
+    BM25 can be negative for a one-chunk document, so token overlap provides
+    a useful floor for small vaults without inventing document content.
+    """
+    stopwords = {"what", "which", "where", "when", "how", "is", "are", "was", "were", "the", "a", "an", "of", "to", "in", "for", "and", "does", "do", "can"}
+    query = set(tokenize_text(question)) - stopwords
+    if not query:
+        return np.zeros(len(texts), dtype=np.float32)
+    return np.array([len(query & set(tokenize_text(text))) / len(query) for text in texts], dtype=np.float32)
+
+
 # ---------------------------------------------------------------------------
 # Retrieval
 # ---------------------------------------------------------------------------
@@ -203,7 +217,19 @@ def retrieve_across_books(
     use_hybrid: bool = True,
 ) -> list[tuple[float, str, Chunk]]:
     """Retrieve top chunks ranked GLOBALLY across all books. Returns (score, title, chunk)."""
-    query_vec = embed_texts([question])[0]
+    if force_all:
+        return [(1.0, book.title, chunk) for book in books for chunk in book.chunks[:40]]
+    try:
+        query_vec = embed_texts([question])[0]
+    except Exception as exc:
+        logging.getLogger(__name__).warning("Embedding unavailable (%s); using local lexical retrieval", type(exc).__name__)
+        pooled = []
+        for book in books:
+            texts = [chunk.text if isinstance(chunk, Chunk) else chunk for chunk in book.chunks]
+            scores = np.maximum(bm25_scores(question, book), lexical_scores(question, texts))
+            pooled.extend((float(score), book.title, chunk) for score, chunk in zip(scores, book.chunks) if score >= MIN_SIMILARITY)
+        pooled.sort(key=lambda item: item[0], reverse=True)
+        return pooled[:top_k]
     pooled: list[tuple[float, str, Chunk]] = []
 
     for book in books:
@@ -399,9 +425,12 @@ def extractive_answer(
     if not candidates:
         return MISSING_REPLY
 
-    query_vec = embed_texts([question])[0]
-    sentence_vecs = embed_texts([sentence for _, sentence in candidates])
-    scores = cosine_scores(query_vec, sentence_vecs)
+    try:
+        query_vec = embed_texts([question])[0]
+        sentence_vecs = embed_texts([sentence for _, sentence in candidates])
+        scores = cosine_scores(query_vec, sentence_vecs)
+    except Exception:
+        scores = lexical_scores(question, [sentence for _, sentence in candidates])
 
     ranked = sorted(zip(scores, candidates), key=lambda item: item[0], reverse=True)
     top = [item for item in ranked if item[0] >= MIN_SIMILARITY][:3]
