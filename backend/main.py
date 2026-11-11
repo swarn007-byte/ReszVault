@@ -337,8 +337,11 @@ def providers() -> dict:
 
 @app.get("/api/auth/session")
 @app.get("/api/auth/get-session")
-def get_session(reszvault_session: Annotated[str | None, Cookie(alias=SESSION_COOKIE)] = None) -> dict:
-    user = get_user_from_session(reszvault_session)
+def get_session(
+    reszvault_session: Annotated[str | None, Cookie(alias=SESSION_COOKIE)] = None,
+    x_session_token: Annotated[str | None, Header(alias="x-session-token")] = None,
+) -> dict:
+    user = get_user_from_session(reszvault_session) or get_user_from_session(x_session_token)
     if not user:
         return {"user": None, "session": None}
     return {
@@ -385,10 +388,14 @@ def sign_in_email(payload: EmailAuthRequest, response: Response) -> dict:
 
 @app.post("/api/auth/sign-out")
 @app.get("/api/auth/sign-out")
-def sign_out(response: Response, reszvault_session: Annotated[str | None, Cookie(alias=SESSION_COOKIE)] = None) -> dict:
-    if reszvault_session:
-        with db() as conn:
-            conn.execute("DELETE FROM sessions WHERE token = ?", (reszvault_session,))
+def sign_out(
+    response: Response,
+    reszvault_session: Annotated[str | None, Cookie(alias=SESSION_COOKIE)] = None,
+    x_session_token: Annotated[str | None, Header(alias="x-session-token")] = None,
+) -> dict:
+    with db() as conn:
+        for token in {reszvault_session, x_session_token} - {None}:
+            conn.execute("DELETE FROM sessions WHERE token = ?", (token,))
     response.delete_cookie(SESSION_COOKIE, path="/")
     return {"success": True}
 

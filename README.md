@@ -36,6 +36,9 @@ ReszVault solves that by treating a project like a vault:
 - Project-scoped source management
 - Obsidian-style vault export with graph-ready note structure
 - Clean notebook-inspired UI for research workflows
+- Searchable folder library with pinned vaults and grid/list views
+- Autosaving Markdown notebooks with paper and typography controls
+- PDF previews and one-click saving of answers into a notebook
 
 ## Product Flow
 
@@ -143,6 +146,26 @@ ReszVault uses a fairly direct RAG flow:
 5. Responses stream back into the chat interface
 
 This keeps the product simple to run locally while still supporting real multi-document workflows.
+
+### Workspace storage
+
+Uploaded PDFs, indexed chunks, users, and sessions are stored by the backend in SQLite and `backend/data/uploads`. Vault organization, notes, appearance preferences, and conversation history are stored in the current browser. They do not automatically synchronize between devices. Export a vault to Markdown to retain its notes, source references, and conversations.
+
+The frontend opens directly into your vault library. Create or open a vault, upload PDFs in **Sources**, ask questions in **Ask sources**, and collect useful answers in **Notebook**. Google sign-in is optional; guest and email sessions support the same research flow. When the embedding model is unavailable, local lexical retrieval can answer from source text without downloading a model. Groq generation remains optional.
+
+### Validation
+
+```bash
+cd backend
+python -m unittest discover -s tests -v
+cd ../frontend
+npm ci
+npm run build
+npm run lint
+npm run test:e2e
+```
+
+Activate the backend virtual environment before these commands. The browser suite starts missing local services and tests desktop and mobile upload, preview, source-based chat, notebook persistence, export, and vault isolation. It uses system Chromium when available; otherwise install the Playwright browser with `npx playwright install chromium`.
 
 ## What Makes It Interesting
 

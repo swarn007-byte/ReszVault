@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { getApiBase } from "./api-base";
 
 type AuthUser = {
@@ -38,12 +38,16 @@ export function setSessionToken(token: string) {
   }
 }
 
-async function authFetch(path: string, init?: RequestInit): Promise<AuthResult> {
+async function authFetch(
+  path: string,
+  init?: RequestInit,
+): Promise<AuthResult> {
   const response = await fetch(`${getApiBase()}${path}`, {
     ...init,
     credentials: "include",
     headers: {
       "Content-Type": "application/json",
+      "x-session-token": getSessionToken(),
       ...(init?.headers ?? {}),
     },
   });
@@ -52,7 +56,14 @@ async function authFetch(path: string, init?: RequestInit): Promise<AuthResult> 
     data?: { session?: { token?: string } };
   };
   if (!response.ok) {
-    return { error: { message: body.detail ?? body.error?.message ?? `Request failed (${response.status})` } };
+    return {
+      error: {
+        message:
+          body.detail ??
+          body.error?.message ??
+          `Request failed (${response.status})`,
+      },
+    };
   }
   // Store session token from response for Vercel proxy compatibility
   if (body.data?.session?.token) {
@@ -76,42 +87,54 @@ export function useSession() {
   const [data, setData] = useState<SessionData | null>(null);
   const [isPending, setIsPending] = useState(true);
   const [error, setError] = useState<Error | null>(null);
+  const revision = useRef(0);
 
   const refetch = useCallback(async () => {
+    const request = ++revision.current;
     setIsPending(true);
     try {
       const session = await loadSession();
-      setData(session);
-      setError(null);
+      if (request === revision.current) {
+        setData(session);
+        setError(null);
+      }
       return session;
     } catch (err) {
-      const nextError = err instanceof Error ? err : new Error("Could not load session");
-      setError(nextError);
-      setData({ user: null, session: null });
+      const nextError =
+        err instanceof Error ? err : new Error("Could not load session");
+      if (request === revision.current) {
+        setError(nextError);
+        setData({ user: null, session: null });
+      }
       return { user: null, session: null };
     } finally {
-      setIsPending(false);
+      if (request === revision.current) setIsPending(false);
     }
   }, []);
 
   useEffect(() => {
     let alive = true;
+    const sessionRevision = revision;
+    const request = ++sessionRevision.current;
     loadSession()
       .then((session) => {
-        if (!alive) return;
+        if (!alive || request !== revision.current) return;
         setData(session);
         setError(null);
       })
       .catch((err: unknown) => {
-        if (!alive) return;
-        setError(err instanceof Error ? err : new Error("Could not load session"));
+        if (!alive || request !== revision.current) return;
+        setError(
+          err instanceof Error ? err : new Error("Could not load session"),
+        );
         setData({ user: null, session: null });
       })
       .finally(() => {
-        if (alive) setIsPending(false);
+        if (alive && request === revision.current) setIsPending(false);
       });
     return () => {
       alive = false;
+      sessionRevision.current++;
     };
   }, []);
 
@@ -127,23 +150,35 @@ export const authClient = {
       }),
   },
   signIn: {
-    email: async (payload: { email: string; password: string; rememberMe?: boolean }) =>
+    email: async (payload: {
+      email: string;
+      password: string;
+      rememberMe?: boolean;
+    }) =>
       authFetch("/api/auth/sign-in/email", {
         method: "POST",
         body: JSON.stringify(payload),
       }),
-    social: async (payload: { provider: "google"; callbackURL: string }): Promise<AuthResult> => {
+    social: async (payload: {
+      provider: "google";
+      callbackURL: string;
+    }): Promise<AuthResult> => {
       const callback = new URL(payload.callbackURL).pathname || "/projects";
       window.location.href = `${getApiBase()}/api/auth/google/start?callbackURL=${encodeURIComponent(callback)}`;
       return { error: null };
     },
   },
   signOut: async () => {
-    setSessionToken("");
-    return authFetch("/api/auth/sign-out", {
+    const result = await authFetch("/api/auth/sign-out", {
       method: "POST",
       body: JSON.stringify({}),
     });
+    if (result.error)
+      throw new Error(
+        result.error.message ?? "Could not sign out. Please try again.",
+      );
+    setSessionToken("");
+    return result;
   },
 };
 

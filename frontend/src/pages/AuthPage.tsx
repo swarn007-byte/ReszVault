@@ -8,7 +8,7 @@ type Mode = "sign-in" | "sign-up";
 type ProviderConfig = { google: boolean };
 
 export function AuthPage() {
-  const { data, isPending } = useSession();
+  const { data, isPending, refetch } = useSession();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [mode, setMode] = useState<Mode>("sign-in");
@@ -27,8 +27,9 @@ export function AuthPage() {
     if (token) {
       setSessionToken(token);
       setSearchParams({}, { replace: true });
+      void refetch();
     }
-  }, [searchParams, setSearchParams]);
+  }, [searchParams, setSearchParams, refetch]);
 
   useEffect(() => {
     let alive = true;

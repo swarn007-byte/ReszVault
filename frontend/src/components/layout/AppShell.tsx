@@ -40,8 +40,15 @@ export function AppShell() {
   } = useChatStore();
   const project = useProjectStore((state) => state.activeProject())!;
   const updateProject = useProjectStore((state) => state.updateProject);
-  const { books, projectBookIds, selected, fetchBooks, uploading, uploadPdf } =
-    useBookStore();
+  const {
+    books,
+    projectBookIds,
+    selected,
+    fetchBooks,
+    uploading,
+    uploadPdf,
+    error: sourceError,
+  } = useBookStore();
   const editor = useEditorStore();
   const fileInput = useRef<HTMLInputElement>(null);
   const noteInput = useRef<HTMLTextAreaElement>(null);
@@ -82,7 +89,9 @@ export function AppShell() {
         title: "Making room for new ideas",
         detail: `Indexing ${processing.length} PDF${processing.length === 1 ? "" : "s"}. Chat will be ready when indexing finishes.`,
       }
-    : null;
+    : sourceError
+      ? { title: "This source needs attention", detail: sourceError }
+      : null;
   const setTab = (next: string) =>
     setParams(next === "chat" ? {} : { tab: next });
   const notify = (message: string) => {
@@ -585,6 +594,11 @@ export function AppShell() {
                 Add PDFs
               </button>
             </div>
+            {sourceError && (
+              <div className="notice error" role="alert">
+                {sourceError}
+              </div>
+            )}
             <button
               className="drop-zone"
               disabled={uploading}
