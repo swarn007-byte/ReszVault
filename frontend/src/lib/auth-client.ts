@@ -18,7 +18,7 @@ type SessionData = {
 };
 
 type AuthResult = {
-  data?: unknown;
+  data?: { user?: AuthUser; session?: { token?: string } };
   error?: { message?: string } | null;
 };
 
@@ -45,12 +45,16 @@ async function authFetch(
   const response = await fetch(`${getApiBase()}${path}`, {
     ...init,
     credentials: "include",
+    signal: AbortSignal.timeout(20_000),
     headers: {
       "Content-Type": "application/json",
       "x-session-token": getSessionToken(),
       ...(init?.headers ?? {}),
     },
   });
+  if (!response.headers.get("content-type")?.includes("application/json")) {
+    return { error: { message: "The sign-in service is unavailable. Please try again in a moment." } };
+  }
   const body = (await response.json().catch(() => ({}))) as AuthResult & {
     detail?: string;
     data?: { session?: { token?: string } };
@@ -65,6 +69,12 @@ async function authFetch(
       },
     };
   }
+  if (path.includes("/sign-in/email") || path.includes("/sign-up/email")) {
+    if (body.error) return body;
+    if (!body.data?.user?.id || !body.data?.session?.token) {
+      return { error: { message: "Sign-in could not be completed. Please try again." } };
+    }
+  }
   // Store session token from response for Vercel proxy compatibility
   if (body.data?.session?.token) {
     setSessionToken(body.data.session.token);
@@ -75,11 +85,12 @@ async function authFetch(
 async function loadSession(): Promise<SessionData> {
   const response = await fetch(`${getApiBase()}/api/auth/session`, {
     credentials: "include",
+    signal: AbortSignal.timeout(12_000),
     headers: {
       "x-session-token": getSessionToken(),
     },
   });
-  if (!response.ok) return { user: null, session: null };
+  if (!response.ok || !response.headers.get("content-type")?.includes("application/json")) throw new Error("The sign-in service is unavailable. Please try again.");
   return (await response.json()) as SessionData;
 }
 
