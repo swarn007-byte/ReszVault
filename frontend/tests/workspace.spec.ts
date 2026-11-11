@@ -1,5 +1,12 @@
 import { test, expect, type Page } from "@playwright/test";
 import { Buffer } from "node:buffer";
+import process from "node:process";
+
+const apiURL = (
+  process.env.PLAYWRIGHT_API_URL ??
+  process.env.PLAYWRIGHT_BASE_URL ??
+  "http://localhost:3000"
+).replace(/\/$/, "");
 
 function researchPdf() {
   const stream =
@@ -51,13 +58,13 @@ test.afterEach(async ({ page, request }) => {
     .catch(() => null);
   if (!guest) return;
   const headers = { "x-guest-id": guest };
-  const response = await request.get("http://localhost:3000/books", {
+  const response = await request.get(`${apiURL}/books`, {
     headers,
   });
   if (!response.ok()) return;
   const body = (await response.json()) as { books: { id: string }[] };
   for (const book of body.books)
-    await request.delete(`http://localhost:3000/books/${book.id}`, { headers });
+    await request.delete(`${apiURL}/books/${book.id}`, { headers });
 });
 
 test("research stays scoped from upload through notebook export", async ({
@@ -91,13 +98,11 @@ test("research stays scoped from upload through notebook export", async ({
   await expect(page.locator(".note-paper")).toHaveClass(/sage/);
 
   await page.getByRole("button", { name: /^Sources/ }).click();
-  await page
-    .locator("input[type=file]")
-    .setInputFiles({
-      name: "research-station.pdf",
-      mimeType: "application/pdf",
-      buffer: researchPdf(),
-    });
+  await page.locator("input[type=file]").setInputFiles({
+    name: "research-station.pdf",
+    mimeType: "application/pdf",
+    buffer: researchPdf(),
+  });
   await expect(page.locator(".library-source-list > button")).toContainText(
     "Indexed",
   );
@@ -186,13 +191,11 @@ test("unreadable sources show an indexing error and can be removed", async ({
   page.on("dialog", (dialog) => dialog.accept());
   await createVault(page, "Source review");
   await page.getByRole("button", { name: /^Sources/ }).click();
-  await page
-    .locator("input[type=file]")
-    .setInputFiles({
-      name: "unreadable.pdf",
-      mimeType: "application/pdf",
-      buffer: Buffer.from("Unreadable PDF content"),
-    });
+  await page.locator("input[type=file]").setInputFiles({
+    name: "unreadable.pdf",
+    mimeType: "application/pdf",
+    buffer: Buffer.from("Unreadable PDF content"),
+  });
   await expect(page.locator(".library-source-list > button")).toContainText(
     "Failed",
   );

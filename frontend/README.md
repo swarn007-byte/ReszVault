@@ -39,3 +39,13 @@ The managed cloud image provides Chromium. On a machine without system Chromium,
 ## Deployment
 
 Use `frontend` as the Vercel project root. The checked-in `vercel.json` forwards API requests to the configured Render service and supports client-side routes. Backend provider credentials belong in backend environment settings, never in frontend bundles.
+
+The project pins Node 24 and Vercel's Vite build settings. Publish the frontend and backend from the same commit: PDF previews and header-based sessions need the updated backend as well as the frontend. With Git integrations enabled, pushing `main` triggers the connected deployments.
+
+Once both services finish deploying, run the same real-service browser checks against production:
+
+```bash
+PLAYWRIGHT_BASE_URL=https://reszvault.vercel.app npm run test:e2e
+```
+
+This skips local server startup and uses the deployed site's API rewrites. Tests use fresh guest identities and delete their own uploaded PDFs. For a deployment with a separate API origin, also set `PLAYWRIGHT_API_URL`. If a deployment has access protection enabled, configure the approved Vercel access mechanism before testing; the suite does not bypass it.
