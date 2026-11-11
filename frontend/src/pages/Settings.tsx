@@ -1,113 +1,124 @@
-import { useEffect, useState } from "react";
-import { Link, Navigate } from "react-router-dom";
-import { motion } from "framer-motion";
+import { Link } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth";
-import { useChatStore } from "../store/chatStore";
-import { VoidBackdrop } from "./AuthPage";
-import { ThemeToggle } from "../components/ThemeToggle";
 import { useThemeStore } from "../store/themeStore";
+import { useProjectStore } from "../store/projectStore";
+import { useChatStore } from "../store/chatStore";
+import {
+  WorkspaceFrame,
+  PageHeader,
+} from "../components/layout/WorkspaceFrame";
+import { Icon } from "../components/Icon";
+import { exportVault } from "../lib/export-vault";
 
 export function Settings() {
-  const { user, logout, isLoading, error, refetch } = useAuth();
-  const { chats } = useChatStore();
-  const { theme } = useThemeStore();
-  const [signingOut, setSigningOut] = useState(false);
-
-  useEffect(() => {
-    refetch();
-  }, [refetch]);
-
-  const handleSignOut = async () => {
-    setSigningOut(true);
-    try {
-      await logout();
-    } finally {
-      setSigningOut(false);
-    }
-  };
-
-  if (!isLoading && !user) {
-    return <Navigate to="/login" replace />;
-  }
-
+  const { user, logout } = useAuth();
+  const { theme, setTheme } = useThemeStore();
+  const { projects, activeProjectId } = useProjectStore();
+  const chats = useChatStore((state) => state.chats);
+  const project =
+    projects.find((item) => item.id === activeProjectId) ?? projects[0];
   return (
-    <VoidBackdrop>
-      <div className="relative z-20 mx-auto min-h-screen max-w-lg px-6 py-10">
-        <div className="flex items-center justify-between">
-          <Link
-            to="/app"
-            className="text-xs uppercase tracking-widest text-text-muted transition-colors hover:text-text"
-          >
-            ← Back to chat
-          </Link>
-          <ThemeToggle />
-        </div>
-
-        <motion.div
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="mt-8"
-        >
-          <p className="text-[10px] uppercase tracking-[0.3em] text-accent/80">Account</p>
-          <h1 className="mt-2 font-serif text-2xl text-text">Settings</h1>
-
-          {error && (
-            <p className="mt-3 rounded-lg border border-red-900/50 bg-red-950/30 px-3 py-2 text-xs text-red-300">
-              Session error: {error.message}
-            </p>
-          )}
-
-          <section className="mt-8 space-y-4">
-            <div className="rounded-xl border border-border bg-elevated/80 p-5 backdrop-blur-sm">
-              <h2 className="text-xs font-medium uppercase tracking-widest text-text-muted">
-                Profile
-              </h2>
-              <p className="mt-3 text-xs text-text-muted">
-                Appearance: <span className="text-text capitalize">{theme} mode</span>
-              </p>
-              {isLoading ? (
-                <div className="mt-4 space-y-3">
-                  {[1, 2, 3].map((i) => (
-                    <div key={i} className="h-4 animate-pulse rounded bg-border/60" />
-                  ))}
-                </div>
-              ) : (
-                <dl className="mt-4 space-y-4 text-sm">
-                  <div>
-                    <dt className="text-[11px] uppercase tracking-wider text-text-muted">Name</dt>
-                    <dd className="mt-1 text-text">{user?.name || "Not set"}</dd>
-                  </div>
-                  <div>
-                    <dt className="text-[11px] uppercase tracking-wider text-text-muted">Email</dt>
-                    <dd className="mt-1 text-text">{user?.email || "—"}</dd>
-                  </div>
-                  <div>
-                    <dt className="text-[11px] uppercase tracking-wider text-text-muted">User ID</dt>
-                    <dd className="mt-1 truncate font-mono text-xs text-text-muted">
-                      {user?.id || "—"}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt className="text-[11px] uppercase tracking-wider text-text-muted">
-                      Saved chats (local)
-                    </dt>
-                    <dd className="mt-1 text-text">{chats.length}</dd>
-                  </div>
-                </dl>
-              )}
+    <WorkspaceFrame>
+      <PageHeader title="Settings" />
+      <div className="settings-content">
+        <span className="eyebrow">A SPACE THAT FEELS LIKE YOU</span>
+        <h1>Make yourself at home.</h1>
+        <p>A few small details for the way you work.</p>
+        <section className="settings-section">
+          <h2>Appearance</h2>
+          <p>Set the mood for your workspace.</p>
+          <div className="appearance-grid">
+            {(["light", "dark"] as const).map((choice) => (
+              <button
+                key={choice}
+                className={`appearance-choice ${theme === choice ? "selected" : ""}`}
+                aria-pressed={theme === choice}
+                onClick={() => setTheme(choice)}
+              >
+                <span className={`appearance-preview ${choice}`}>
+                  <i />
+                  <b />
+                </span>
+                <span>
+                  {choice === "light" ? "Light & airy" : "After hours"}
+                  {theme === choice && <Icon name="check" size={13} />}
+                </span>
+              </button>
+            ))}
+          </div>
+        </section>
+        <section className="settings-section">
+          <h2>Your workspace</h2>
+          <p>
+            Vault names, conversations, and notebook entries are saved in this
+            browser. Uploaded documents are stored by the connected ReszVault
+            service. Export a vault to keep a Markdown copy of your work.
+          </p>
+          <dl className="properties">
+            <div>
+              <dt>Vaults</dt>
+              <dd>{projects.length}</dd>
             </div>
-
-            <button
-              type="button"
-              onClick={handleSignOut}
-              disabled={signingOut || isLoading}
-              className="w-full rounded-lg border border-red-900/40 bg-red-950/20 py-3 text-sm text-red-300 transition-colors hover:border-red-800/60 hover:bg-red-950/40 disabled:opacity-50"
-            >
-              {signingOut ? "Signing out…" : "Sign out"}
+            <div>
+              <dt>Saved conversations</dt>
+              <dd>{chats.filter((chat) => chat.messages.length).length}</dd>
+            </div>
+            <div>
+              <dt>Notebook words</dt>
+              <dd>
+                {projects.reduce(
+                  (count, item) =>
+                    count +
+                    (item.notes?.trim()
+                      ? item.notes.trim().split(/\s+/).length
+                      : 0),
+                  0,
+                )}
+              </dd>
+            </div>
+          </dl>
+          {project && (
+            <button className="button" onClick={() => exportVault(project)}>
+              <Icon name="download" size={15} />
+              Export {project.name}
             </button>
-          </section>
-        </motion.div>
+          )}
+        </section>
+        <section className="settings-section">
+          <h2>Account</h2>
+          <div className="account-details">
+            <span className="profile-avatar">
+              {(user?.name ?? "Guest").charAt(0).toUpperCase()}
+            </span>
+            <div>
+              <strong>{user?.name ?? "Guest workspace"}</strong>
+              <p>{user?.email ?? "You can research without an account."}</p>
+            </div>
+          </div>
+          {user ? (
+            <button className="button" onClick={() => void logout()}>
+              <Icon name="logout" size={15} />
+              Sign out
+            </button>
+          ) : (
+            <Link className="button" to="/login">
+              Sign in to your account <Icon name="arrow" size={15} />
+            </Link>
+          )}
+        </section>
+        <section className="settings-section">
+          <h2>Keep your flow</h2>
+          <div className="keyboard-hint">
+            <kbd>Enter</kbd> Send your question
+          </div>
+          <div className="keyboard-hint">
+            <kbd>Shift ↵</kbd> Add a new line
+          </div>
+          <div className="keyboard-hint">
+            <kbd>Esc</kbd> Close dialogs and document previews
+          </div>
+        </section>
       </div>
-    </VoidBackdrop>
+    </WorkspaceFrame>
   );
 }

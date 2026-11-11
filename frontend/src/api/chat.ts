@@ -33,7 +33,8 @@ type SsePayload = {
 };
 
 function toFriendlyChatError(message?: string): string {
-  if (!message) return "The vault could not answer right now. Please try again.";
+  if (!message)
+    return "The vault could not answer right now. Please try again.";
   const normalized = message.toLowerCase();
   if (
     normalized.includes("prisma") ||
@@ -44,10 +45,16 @@ function toFriendlyChatError(message?: string): string {
   ) {
     return "I could not reach a source for this chat. Upload a PDF or choose an indexed project source.";
   }
-  if (normalized.includes("failed to fetch") || normalized.includes("network")) {
+  if (
+    normalized.includes("failed to fetch") ||
+    normalized.includes("network")
+  ) {
     return "The chat service is not reachable right now. Please check the server and try again.";
   }
-  if (normalized.includes("still indexing") || normalized.includes("indexing to finish")) {
+  if (
+    normalized.includes("still indexing") ||
+    normalized.includes("indexing to finish")
+  ) {
     return message;
   }
   return message;
@@ -73,7 +80,11 @@ export async function sendQuestion(
 export async function streamQuestion(
   question: string,
   callbacks: StreamCallbacks,
-  options?: { bookId?: string | null; bookIds?: string[]; signal?: AbortSignal },
+  options?: {
+    bookId?: string | null;
+    bookIds?: string[];
+    signal?: AbortSignal;
+  },
 ): Promise<void> {
   const { bookId, bookIds, signal } = options ?? {};
   let res: globalThis.Response;
@@ -94,16 +105,28 @@ export async function streamQuestion(
       signal,
     });
   } catch (error) {
+    if (signal?.aborted) return;
     callbacks.onError?.(
-      toFriendlyChatError(error instanceof Error ? error.message : "Failed to fetch"),
+      toFriendlyChatError(
+        error instanceof Error ? error.message : "Failed to fetch",
+      ),
     );
     return;
   }
 
   if (!res.ok) {
-    const body = (await res.json().catch(() => ({}))) as { error?: string; details?: string; detail?: string };
+    const body = (await res.json().catch(() => ({}))) as {
+      error?: string;
+      details?: string;
+      detail?: string;
+    };
     callbacks.onError?.(
-      toFriendlyChatError(body.detail ?? body.details ?? body.error ?? `Request failed (${res.status})`),
+      toFriendlyChatError(
+        body.detail ??
+          body.details ??
+          body.error ??
+          `Request failed (${res.status})`,
+      ),
     );
     return;
   }
@@ -143,7 +166,8 @@ export async function streamQuestion(
           return;
         }
         if (payload.token) callbacks.onToken(payload.token);
-        if (payload.replace && payload.answer) callbacks.onReplace?.(payload.answer);
+        if (payload.replace && payload.answer)
+          callbacks.onReplace?.(payload.answer);
         if (payload.done) {
           callbacks.onDone?.({
             sourcesUsed: payload.sourcesUsed ?? 0,
@@ -153,8 +177,13 @@ export async function streamQuestion(
       }
     }
   } catch (error) {
+    if (signal?.aborted) return;
     callbacks.onError?.(
-      toFriendlyChatError(error instanceof Error ? error.message : "The chat stream was interrupted."),
+      toFriendlyChatError(
+        error instanceof Error
+          ? error.message
+          : "The chat stream was interrupted.",
+      ),
     );
   }
 }

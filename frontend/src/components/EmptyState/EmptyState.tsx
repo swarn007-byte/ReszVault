@@ -1,85 +1,100 @@
-import { motion } from "framer-motion";
+import { Icon } from "../Icon";
 import { InputBar } from "../InputBar/InputBar";
 
-const SUGGESTIONS = [
-  {
-    label: "Summarize vault",
-    prompt: "Summarize all project sources with concise, source-grounded bullets.",
-  },
-  {
-    label: "Find key points",
-    prompt: "What are the most important points across the project sources?",
-  },
-  {
-    label: "Make notes",
-    prompt: "Turn the project sources into clean study notes with headings.",
-  },
-];
-
-type StatusNotice = { title: string; detail: string; tone?: "info" | "warning" | "error" };
-
-type EmptyStateProps = {
+type Props = {
   onSend: (text: string) => void;
+  onUpload: () => void;
+  sourceCount: number;
   disabled?: boolean;
   placeholder?: string;
-  statusNotice?: StatusNotice | null;
+  statusNotice?: { title: string; detail: string } | null;
 };
-
-export function EmptyState({ onSend, disabled, placeholder, statusNotice }: EmptyStateProps) {
+const prompts = [
+  {
+    icon: "file",
+    title: "Get the big picture",
+    caption: "A summary of your sources",
+    text: "Summarize all project sources with clear, source-grounded points.",
+  },
+  {
+    icon: "search",
+    title: "Know your sources",
+    caption: "See what's in this vault",
+    text: "List all uploaded source documents.",
+  },
+  {
+    icon: "note",
+    title: "Make it memorable",
+    caption: "Turn research into notes",
+    text: "Summarize all project sources as structured study notes.",
+  },
+];
+export function EmptyState({
+  onSend,
+  onUpload,
+  sourceCount,
+  disabled,
+  placeholder,
+  statusNotice,
+}: Props) {
   return (
-    <div className="flex h-full flex-1 flex-col justify-center overflow-y-auto bg-[#f6f4f1] px-4 py-8 md:px-8">
-      <motion.div
-        className="mx-auto flex w-full max-w-[980px] flex-col justify-center"
-        initial={{ opacity: 0, y: 16 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.4 }}
-      >
-        <div className="mb-8 text-center">
-          <img
-            src="/github-avatar.png"
-            alt=""
-            className="mx-auto mb-4 h-12 w-12 rounded-full object-cover shadow-sm"
-          />
-          <h1 className="text-xl font-semibold tracking-[-0.01em] text-[#242731] md:text-2xl">
-            ReszVault
-          </h1>
-          <p className="mt-1 text-sm text-[#666d78]">Chat with source-grounded context.</p>
-        </div>
-
-        {statusNotice && (
-          <div
-            className={`mx-auto mb-4 w-full max-w-[620px] rounded-2xl border px-4 py-3 text-sm ${
-              statusNotice.tone === "error"
-                ? "border-[#f0d0d0] bg-[#fff6f6] text-[#7b3838]"
-                : statusNotice.tone === "warning"
-                  ? "border-[#edd9c4] bg-[#fff8ef] text-[#85521d]"
-                  : "border-[#e3ddd5] bg-[#fffdfa] text-[#5f584f]"
-            }`}
+    <div className="empty-chat">
+      <div className="empty-chat-content">
+        <span className="research-symbol">
+          <Icon name="sparkle" size={30} />
+        </span>
+        <span className="eyebrow">A LITTLE CONTEXT. A NEW PERSPECTIVE.</span>
+        <h2>
+          Good questions
+          <br />
+          start here<span className="title-dot">.</span>
+        </h2>
+        <p>
+          {sourceCount
+            ? "Your sources are ready. Follow a thought and see where it takes you."
+            : "Bring your documents together. Find the ideas that connect them."}
+        </p>
+        {!sourceCount && (
+          <button
+            className="button primary"
+            onClick={onUpload}
+            disabled={disabled}
           >
-            <p className="font-semibold">{statusNotice.title}</p>
-            <p className="mt-1 leading-relaxed opacity-90">{statusNotice.detail}</p>
+            <Icon name="upload" size={16} /> Add your first source
+          </button>
+        )}
+        {statusNotice && (
+          <div className="notice" role="status">
+            <strong>{statusNotice.title}</strong>
+            <span>{statusNotice.detail}</span>
           </div>
         )}
-
-        <div className="mx-auto mb-5 grid w-full max-w-[620px] gap-2 sm:grid-cols-3">
-          {SUGGESTIONS.map((s) => (
+        <div className="prompt-grid">
+          {prompts.map((prompt) => (
             <button
-              key={s.label}
-              type="button"
-              disabled={disabled}
-              onClick={() => onSend(s.prompt)}
-              className="rounded-lg border border-[#e3d7ca] bg-white px-3 py-3 text-left text-sm font-medium text-[#434a56] shadow-[0_1px_2px_rgba(15,23,42,0.03)] transition hover:border-[#e8791a] hover:bg-[#fff7ef] disabled:opacity-50"
+              key={prompt.title}
+              disabled={disabled || !sourceCount}
+              onClick={() => onSend(prompt.text)}
             >
-              {s.label}
+              <Icon name={prompt.icon} size={20} />
+              <strong>{prompt.title}</strong>
+              <span>{prompt.caption}</span>
+              <Icon name="arrow" size={15} />
             </button>
           ))}
         </div>
-
-        <InputBar onSend={onSend} disabled={disabled} autoFocus placeholder={placeholder} />
-        <p className="mt-2 text-center text-xs text-[#777d88]">
-          ReszVault can make mistakes. Check important source details.
+      </div>
+      <div className="chat-composer">
+        <InputBar
+          onSend={onSend}
+          disabled={disabled || !sourceCount}
+          placeholder={placeholder}
+        />
+        <p>
+          Answers stay grounded in your sources. Your curiosity sets the
+          direction.
         </p>
-      </motion.div>
+      </div>
     </div>
   );
 }

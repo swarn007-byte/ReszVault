@@ -1,148 +1,202 @@
-import { Link, useLocation, useNavigate } from "react-router-dom";
+import {
+  Link,
+  useLocation,
+  useNavigate,
+  useSearchParams,
+} from "react-router-dom";
 import { useAuth } from "../../hooks/useAuth";
 import { useChatStore } from "../../store/chatStore";
 import { useProjectStore } from "../../store/projectStore";
-import { BookPicker } from "./BookPicker";
+import { Brand, Icon } from "../Icon";
 
-type SidebarProps = {
-  activeChatId: string | null;
-  onCloseMobile?: () => void;
-};
-
-export function Sidebar({ onCloseMobile }: SidebarProps) {
-  const navigate = useNavigate();
+export function Sidebar() {
   const location = useLocation();
+  const navigate = useNavigate();
+  const [params] = useSearchParams();
   const { user, logout } = useAuth();
-  const { createChat, setActiveChat } = useChatStore();
-  const activeProjectId = useProjectStore((state) => state.activeProjectId);
-  const projects = useProjectStore((state) => state.projects);
-  const createProject = useProjectStore((state) => state.createProject);
-  const isGuestRoute = location.pathname.startsWith("/guest");
-  const chatBasePath = isGuestRoute ? "/guest" : "/app";
-
-  const handleNewChat = () => {
-    const id = createChat();
-    setActiveChat(id);
-    navigate(`${chatBasePath}/${id}`);
-    onCloseMobile?.();
+  const { projects, activeProjectId, selectProject } = useProjectStore();
+  const { chats, sidebarOpen, setSidebarOpen, createChat } = useChatStore();
+  const inVault = /^\/(app|guest)(\/|$)/.test(location.pathname);
+  const base = user ? "/app" : "/guest";
+  const close = () => setSidebarOpen(false);
+  const openProject = (id: string) => {
+    selectProject(id);
+    navigate(base);
+    close();
   };
-
-  const handleNewProject = () => {
-    if (user) {
-      navigate("/projects?manage=1");
-      onCloseMobile?.();
-      return;
-    }
-
-    createProject({
-      name: `Project ${projects.length + 1}`,
-      description: "A focused workspace for sources and grounded answers.",
-    });
-    const id = createChat();
-    setActiveChat(id);
-    navigate(`${chatBasePath}/${id}`);
-    onCloseMobile?.();
-  };
-
-  const displayName = user?.name ?? user?.email?.split("@")[0] ?? "Guest";
-  const initial = displayName.charAt(0).toUpperCase();
-  const userAvatar = user?.image;
-
+  const history = chats
+    .filter(
+      (chat) =>
+        chat.messages.length &&
+        (!inVault || chat.projectId === activeProjectId),
+    )
+    .slice(0, 4);
+  const nav = (
+    path: string,
+    icon: string,
+    label: string,
+    active: boolean,
+    count?: number,
+  ) => (
+    <Link
+      className={`nav-item ${active ? "active" : ""}`}
+      to={path}
+      onClick={close}
+    >
+      <Icon name={icon} />
+      <span>{label}</span>
+      {count !== undefined && <small>{count}</small>}
+    </Link>
+  );
   return (
-    <aside className="flex h-full w-[300px] shrink-0 overflow-hidden border-r border-[#e8ddd0] bg-[#fffdfa] text-[#242731]">
-      <div className="flex h-full w-full shrink-0 flex-col bg-[#fffdfa]">
-        <div className="px-6 pb-4 pt-7">
-          <div className="flex items-center gap-3">
-            <img
-              src="/github-avatar.png"
-              alt=""
-              className="h-10 w-10 rounded-full object-cover shadow-sm"
-            />
-            <div>
-              <p className="text-xl font-semibold tracking-[-0.01em] text-[#181a20]">
-                ReszVault
-              </p>
-              <p className="mt-1 text-sm text-[#7b7268]">Chat with your sources.</p>
+    <>
+      {sidebarOpen && (
+        <button
+          className="nav-backdrop"
+          onClick={close}
+          aria-label="Close navigation"
+        />
+      )}
+      <aside
+        className={`sidebar ${sidebarOpen ? "is-open" : ""}`}
+        aria-label="Main navigation"
+      >
+        <Link to="/" className="sidebar-brand" onClick={close}>
+          <Brand />
+        </Link>
+        <div className="workspace-switch">
+          <span className="workspace-avatar">W</span>
+          <div>
+            <strong>My workspace</strong>
+            <small>Personal library</small>
+          </div>
+          <span className="private-pill">Private</span>
+        </div>
+        <nav className="main-nav">
+          {nav(
+            "/",
+            "grid",
+            "All vaults",
+            !inVault &&
+              location.pathname !== "/settings" &&
+              !params.get("view"),
+            projects.length,
+          )}
+          {nav(
+            "/?view=pinned",
+            "pin",
+            "Pinned",
+            params.get("view") === "pinned",
+            projects.filter((p) => p.pinned).length,
+          )}
+          {nav(
+            "/?view=notes",
+            "note",
+            "Notebooks",
+            params.get("view") === "notes",
+          )}
+        </nav>
+        <div className="sidebar-section-head">
+          <span>YOUR VAULTS</span>
+          <Link
+            to="/?create=1"
+            className="icon-button"
+            aria-label="Create a vault"
+            onClick={close}
+          >
+            <Icon name="plus" size={16} />
+          </Link>
+        </div>
+        <nav className="vault-nav">
+          {projects.slice(0, 7).map((project) => (
+            <button
+              key={project.id}
+              className={`vault-nav-item ${inVault && project.id === activeProjectId ? "selected" : ""}`}
+              onClick={() => openProject(project.id)}
+              title={project.name}
+            >
+              <span className={`vault-dot ${project.color ?? "blue"}`} />
+              <span>{project.name}</span>
+              {inVault && project.id === activeProjectId && (
+                <Icon name="chevron" size={13} />
+              )}
+            </button>
+          ))}
+        </nav>
+        {inVault && (
+          <button
+            className="new-conversation"
+            onClick={() => {
+              const id = createChat();
+              navigate(`${base}/${id}`);
+              close();
+            }}
+          >
+            <Icon name="plus" size={16} /> New conversation
+          </button>
+        )}
+        {history.length > 0 && (
+          <>
+            <div className="sidebar-section-head history-heading">
+              <span>RECENT CONVERSATIONS</span>
             </div>
+            <nav className="history-nav">
+              {history.map((chat) => (
+                <button
+                  key={chat.id}
+                  onClick={() => {
+                    selectProject(chat.projectId);
+                    navigate(`${base}/${chat.id}`);
+                    close();
+                  }}
+                >
+                  <Icon name="chat" size={15} />
+                  <span>{chat.title}</span>
+                </button>
+              ))}
+            </nav>
+          </>
+        )}
+        <div className="sidebar-bottom">
+          <div className="local-storage-note">
+            <span className="status-dot" />
+            <span>Notes saved on this device</span>
+          </div>
+          {nav(
+            "/settings",
+            "settings",
+            "Settings",
+            location.pathname === "/settings",
+          )}
+          <div className="profile-row">
+            <span className="profile-avatar">
+              {(user?.name ?? "Guest").charAt(0).toUpperCase()}
+            </span>
+            <div>
+              <strong>{user?.name ?? "Guest workspace"}</strong>
+              <small>{user?.email ?? "Your own space to explore"}</small>
+            </div>
+            {user ? (
+              <button
+                className="icon-button"
+                aria-label="Sign out"
+                onClick={() => void logout()}
+              >
+                <Icon name="logout" size={16} />
+              </button>
+            ) : (
+              <Link
+                className="icon-button"
+                to="/login"
+                aria-label="Sign in"
+                onClick={close}
+              >
+                <Icon name="arrow" size={16} />
+              </Link>
+            )}
           </div>
         </div>
-
-        <div className="px-6 pb-4">
-          <button
-            type="button"
-            onClick={handleNewChat}
-            className="flex w-full items-center justify-center gap-2 rounded-lg border border-[#e8ddd0] bg-white px-4 py-2.5 text-sm font-medium text-[#2b2e36] shadow-[0_1px_2px_rgba(15,23,42,0.04)] transition hover:border-[#e8791a] hover:bg-[#fff7ef]"
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round">
-              <path d="M12 5v14M5 12h14" />
-            </svg>
-            New Chat
-          </button>
-        </div>
-
-        <div className="px-6 pb-4">
-          <BookPicker projectId={activeProjectId} />
-        </div>
-
-        <div className="min-h-0 flex-1 px-6 py-4">
-          <button
-            type="button"
-            onClick={handleNewProject}
-            className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-[#ead9c8] bg-[#fffdfa] px-4 py-2.5 text-xs font-semibold text-[#6b6258] transition hover:border-[#e8791a] hover:bg-[#fff7ef]"
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-              <path d="M12 5v14M5 12h14" />
-            </svg>
-            Project
-          </button>
-        </div>
-
-        <div className="border-t border-[#e8ddd0] p-4">
-          {user ? (
-            <div className="flex items-center gap-3 rounded-lg px-2 py-2 transition-colors hover:bg-[#fbf3eb]">
-              {userAvatar ? (
-                <img
-                  src={userAvatar}
-                  alt=""
-                  referrerPolicy="no-referrer"
-                  className="h-8 w-8 shrink-0 rounded-full object-cover shadow-sm"
-                />
-              ) : (
-                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#f7ede5] text-xs font-semibold text-[#8f5c24]">
-                  {initial}
-                </div>
-              )}
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium text-[#24262d]">
-                  {displayName}
-                </p>
-                <p className="truncate text-[10px] text-[#8b909a]">{user.email}</p>
-              </div>
-              <button
-                type="button"
-                onClick={() => logout()}
-                className="shrink-0 rounded-lg p-1.5 text-[#8b909a] transition-colors hover:bg-[#f4eee8] hover:text-[#24262d]"
-                aria-label="Sign out"
-                title="Sign out"
-              >
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                  <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
-                  <polyline points="16 17 21 12 16 7" />
-                  <line x1="21" y1="12" x2="9" y2="12" />
-                </svg>
-              </button>
-            </div>
-          ) : (
-            <Link
-              to="/login"
-              onClick={onCloseMobile}
-              className="flex w-full items-center justify-center rounded-lg border border-[#e8ddd0] bg-white py-2.5 text-xs font-medium text-[#5d5144] transition-colors hover:border-[#e8791a] hover:bg-[#fff7ef]"
-            >
-              Sign in
-            </Link>
-          )}
-        </div>
-      </div>
-    </aside>
+      </aside>
+    </>
   );
 }

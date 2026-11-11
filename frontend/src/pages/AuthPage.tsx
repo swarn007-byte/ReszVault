@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Link, Navigate, useNavigate, useSearchParams } from "react-router-dom";
 import { authClient, useSession, setSessionToken } from "../lib/auth-client";
+import { Brand } from "../components/Icon";
 
 type Mode = "sign-in" | "sign-up";
 type ProviderConfig = { google: boolean };
@@ -73,7 +74,9 @@ export function AuthPage() {
       navigate("/projects", { replace: true });
     } catch (authError) {
       setError(
-        authError instanceof Error ? authError.message : "Authentication failed",
+        authError instanceof Error
+          ? authError.message
+          : "Authentication failed",
       );
     } finally {
       setLoading(false);
@@ -93,12 +96,16 @@ export function AuthPage() {
         provider,
         callbackURL: `${window.location.origin}/projects`,
       });
-      if (authError) throw new Error(authError.message ?? "Social sign-in failed");
+      if (authError)
+        throw new Error(authError.message ?? "Social sign-in failed");
     } catch (authError) {
-      const message = authError instanceof Error ? authError.message : "Social sign-in failed";
+      const message =
+        authError instanceof Error
+          ? authError.message
+          : "Social sign-in failed";
       setError(
         message.includes("Failed to fetch") || message.includes("500")
-          ? "Authentication server is reachable, but the auth database is not. Check DATABASE_URL in backend/.env."
+          ? "Google sign-in could not start. Please try again."
           : message,
       );
       setLoading(false);
@@ -108,8 +115,7 @@ export function AuthPage() {
   return (
     <main className="rv-auth">
       <Link className="rv-auth-brand" to="/">
-        <img src="/github-avatar.png" alt="" />
-        <strong>reszvault</strong>
+        <Brand />
       </Link>
 
       <motion.section
@@ -121,7 +127,9 @@ export function AuthPage() {
         <section className="rv-auth-card">
           <div className="rv-auth-card-head">
             <span>{isSignUp ? "Create account" : "Authentication"}</span>
-            <h2>{isSignUp ? "Create your workspace." : "Sign in to continue."}</h2>
+            <h2>
+              {isSignUp ? "Create your workspace." : "Sign in to continue."}
+            </h2>
             <p>
               {isSignUp
                 ? "Create a project space for PDFs, source selection, and saved chats."
@@ -129,8 +137,16 @@ export function AuthPage() {
             </p>
           </div>
 
-          <div className="rv-auth-tabs" role="tablist" aria-label="Authentication mode">
-            <i className="rv-auth-tab-indicator" data-mode={mode} aria-hidden="true" />
+          <div
+            className="rv-auth-tabs"
+            role="tablist"
+            aria-label="Authentication mode"
+          >
+            <i
+              className="rv-auth-tab-indicator"
+              data-mode={mode}
+              aria-hidden="true"
+            />
             <button
               type="button"
               aria-selected={!isSignUp}
@@ -158,7 +174,11 @@ export function AuthPage() {
               type="button"
               disabled={loading || !providers.google}
               onClick={() => handleSocial("google")}
-              title={providers.google ? "Continue with Google" : "Google login is not configured"}
+              title={
+                providers.google
+                  ? "Continue with Google"
+                  : "Google login is not configured"
+              }
             >
               <GoogleMark />
               Google
@@ -187,7 +207,7 @@ export function AuthPage() {
                     required
                     value={name}
                     onChange={(event) => setName(event.target.value)}
-                    placeholder="Swarn"
+                    placeholder="Your full name"
                     autoComplete="name"
                   />
                 </motion.label>
@@ -214,15 +234,23 @@ export function AuthPage() {
                 minLength={8}
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
-                placeholder={isSignUp ? "At least 8 characters" : "Your password"}
+                placeholder={
+                  isSignUp ? "At least 8 characters" : "Your password"
+                }
                 autoComplete={isSignUp ? "new-password" : "current-password"}
               />
             </label>
 
-            {error && <p className="rv-auth-error" role="alert">{error}</p>}
+            {error && (
+              <p className="rv-auth-error" role="alert">
+                {error}
+              </p>
+            )}
 
             <button className="rv-auth-submit" type="submit" disabled={loading}>
-              {loading && <span className="rv-auth-spinner" aria-hidden="true" />}
+              {loading && (
+                <span className="rv-auth-spinner" aria-hidden="true" />
+              )}
               {loading
                 ? isSignUp
                   ? "Creating account..."
@@ -234,12 +262,20 @@ export function AuthPage() {
           </form>
 
           <div className="rv-auth-secondary-actions">
-            <button className="rv-auth-back" type="button" onClick={() => navigate("/")}>
+            <button
+              className="rv-auth-back"
+              type="button"
+              onClick={() => navigate("/")}
+            >
               Back
             </button>
 
-            <button className="rv-auth-guest" type="button" onClick={() => navigate("/guest")}>
-              Guest
+            <button
+              className="rv-auth-guest"
+              type="button"
+              onClick={() => navigate("/")}
+            >
+              Continue without an account
             </button>
           </div>
         </section>
@@ -251,10 +287,22 @@ export function AuthPage() {
 function GoogleMark() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09Z" />
-      <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84A10.99 10.99 0 0 0 12 23Z" />
-      <path fill="#FBBC05" d="M5.84 14.1a6.6 6.6 0 0 1 0-4.2V7.06H2.18a10.99 10.99 0 0 0 0 9.88l3.66-2.84Z" />
-      <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1A10.99 10.99 0 0 0 2.18 7.06L5.84 9.9C6.71 7.31 9.14 5.38 12 5.38Z" />
+      <path
+        fill="#4285F4"
+        d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09Z"
+      />
+      <path
+        fill="#34A853"
+        d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84A10.99 10.99 0 0 0 12 23Z"
+      />
+      <path
+        fill="#FBBC05"
+        d="M5.84 14.1a6.6 6.6 0 0 1 0-4.2V7.06H2.18a10.99 10.99 0 0 0 0 9.88l3.66-2.84Z"
+      />
+      <path
+        fill="#EA4335"
+        d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1A10.99 10.99 0 0 0 2.18 7.06L5.84 9.9C6.71 7.31 9.14 5.38 12 5.38Z"
+      />
     </svg>
   );
 }

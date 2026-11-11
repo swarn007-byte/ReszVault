@@ -1,389 +1,648 @@
-import { useEffect, useMemo, useState } from "react";
-import { AnimatePresence, motion } from "framer-motion";
-import { useLocation, useNavigate, useParams } from "react-router-dom";
-import { Sidebar } from "../Sidebar/Sidebar";
-import { useChatStore } from "../../store/chatStore";
+import { useEffect, useRef, useState, type ChangeEvent } from "react";
+import {
+  useLocation,
+  useNavigate,
+  useParams,
+  useSearchParams,
+} from "react-router-dom";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import { WorkspaceFrame, PageHeader } from "./WorkspaceFrame";
+import { Icon } from "../Icon";
 import { EmptyState } from "../EmptyState/EmptyState";
 import { ChatWindow } from "../ChatWindow/ChatWindow";
-import { streamQuestion } from "../../api/chat";
+import { BookPicker } from "../Sidebar/BookPicker";
+import { PdfPreview } from "../PdfPreview";
+import { useChatStore } from "../../store/chatStore";
 import { useBookStore } from "../../store/bookStore";
 import { useProjectStore } from "../../store/projectStore";
-
-function slugify(value: string) {
-  return value
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/(^-|-$)/g, "")
-    .slice(0, 64) || "reszvault";
-}
-
-function downloadMarkdown(filename: string, content: string) {
-  const blob = new Blob([content], { type: "text/markdown;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = filename;
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
-  URL.revokeObjectURL(url);
-}
+import { useEditorStore } from "../../store/editorStore";
+import { streamQuestion } from "../../api/chat";
+import type { BookRecord } from "../../api/books";
+import { exportVault } from "../../lib/export-vault";
 
 export function AppShell() {
   const navigate = useNavigate();
   const location = useLocation();
   const { id } = useParams<{ id?: string }>();
+  const [params, setParams] = useSearchParams();
   const {
     chats,
-    activeChatId,
-    sidebarOpen,
     isSending,
-    setSidebarOpen,
-    setHistoryLoading,
-    setIsSending,
-    setActiveChat,
     createChat,
     addMessage,
     appendToMessage,
     setMessageContent,
-    getChat,
+    setMessageSources,
+    setIsSending,
+    setActiveChat,
+    deleteChat,
   } = useChatStore();
-  const activeProject = useProjectStore((s) => s.activeProject());
-  const activeProjectId = useProjectStore((s) => s.activeProjectId);
-  const books = useBookStore((s) => s.books);
-  const projectBookIds = useBookStore((s) => s.projectBookIds);
-  const fetchBooks = useBookStore((s) => s.fetchBooks);
-  const uploading = useBookStore((s) => s.uploading);
-  const [connectState, setConnectState] = useState<"idle" | "done">("idle");
-  const scopedBooks = useMemo(() => {
-    if (!activeProjectId) return books;
-    const ids = projectBookIds[activeProjectId];
-    const hasAnyProjectMap = Object.values(projectBookIds).some((bookIds) => bookIds.length > 0);
-    if (!ids && !hasAnyProjectMap) return books;
-    if (!ids) return [];
-    const idSet = new Set(ids);
-    return books.filter((book) => idSet.has(book.id));
-  }, [activeProjectId, books, projectBookIds]);
-  const selectedBookIds = useMemo(() => {
-    return scopedBooks
-      .filter((book) => book.status === "ready")
-      .map((book) => book.id);
-  }, [scopedBooks]);
-  const processingBooks = useMemo(
-    () => scopedBooks.filter((book) => book.status === "processing"),
-    [scopedBooks],
+  const project = useProjectStore((state) => state.activeProject())!;
+  const updateProject = useProjectStore((state) => state.updateProject);
+  const { books, projectBookIds, selected, fetchBooks, uploading, uploadPdf } =
+    useBookStore();
+  const editor = useEditorStore();
+  const fileInput = useRef<HTMLInputElement>(null);
+  const noteInput = useRef<HTMLTextAreaElement>(null);
+  const controller = useRef<AbortController | null>(null);
+  const [preview, setPreview] = useState<BookRecord | null>(null);
+  const [notePreview, setNotePreview] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(
+    () => window.matchMedia("(min-width: 1101px)").matches,
   );
-  const failedBooks = useMemo(
-    () => scopedBooks.filter((book) => book.status === "failed"),
-    [scopedBooks],
+  const [toast, setToast] = useState("");
+  const tab = ["notes", "sources"].includes(params.get("tab") ?? "")
+    ? params.get("tab")!
+    : "chat";
+  const base = location.pathname.startsWith("/guest") ? "/guest" : "/app";
+  const scopedBooks = books.filter((book) =>
+    (projectBookIds[project.id] ?? []).includes(book.id),
   );
-  const composerDisabled = isSending || uploading || processingBooks.length > 0;
-  const composerPlaceholder = processingBooks.length > 0
-    ? "Indexing your PDFs... chat unlocks when the vault is ready."
-    : uploading
-      ? "Uploading your PDF..."
-      : "Type your message here...";
-  const statusNotice = processingBooks.length > 0
+  const readyBooks = scopedBooks.filter((book) => book.status === "ready");
+  const processing = scopedBooks.filter((book) => book.status === "processing");
+  const activeChat = chats.find(
+    (chat) => chat.id === id && chat.projectId === project.id,
+  );
+  const selectedIds =
+    selected.kind === "user" &&
+    readyBooks.some((book) => book.id === selected.id)
+      ? [selected.id]
+      : readyBooks.map((book) => book.id);
+  const notes = project.notes ?? "";
+  const words = notes.trim() ? notes.trim().split(/\s+/).length : 0;
+  const blocked = isSending || uploading || processing.length > 0;
+  const placeholder = processing.length
+    ? "Your sources are indexing…"
+    : !readyBooks.length
+      ? "Upload a PDF to start asking questions…"
+      : "Ask anything about your sources…";
+  const notice = processing.length
     ? {
-        title: "Vault indexing in progress",
-        detail: `ReszVault is preparing ${processingBooks.length} PDF${processingBooks.length === 1 ? "" : "s"} for retrieval. Wait a moment so answers use the full project context.`,
-        tone: "warning" as const,
+        title: "Making room for new ideas",
+        detail: `Indexing ${processing.length} PDF${processing.length === 1 ? "" : "s"}. Chat will be ready when indexing finishes.`,
       }
-    : failedBooks.length > 0
-      ? {
-          title: "Some sources need attention",
-          detail: failedBooks[0]?.error ?? "One or more PDFs failed during indexing. Re-upload them before relying on the vault.",
-          tone: "error" as const,
-        }
-      : null;
-  const isGuestRoute = location.pathname.startsWith("/guest");
-  const chatBasePath = isGuestRoute ? "/guest" : "/app";
-
-  useEffect(() => {
-    setSidebarOpen(false);
-    const t = setTimeout(() => setHistoryLoading(false), 400);
-    return () => clearTimeout(t);
-  }, [setHistoryLoading, setSidebarOpen]);
-
-  useEffect(() => {
-    void fetchBooks(activeProjectId);
-  }, [activeProjectId, fetchBooks]);
-
-  useEffect(() => {
-    if (!processingBooks.length) return;
-    const timer = window.setInterval(() => {
-      void fetchBooks(activeProjectId);
-    }, 2200);
-    return () => window.clearInterval(timer);
-  }, [activeProjectId, fetchBooks, processingBooks.length]);
-
-  useEffect(() => {
-    if (id) {
-      const exists = chats.some((c) => c.id === id);
-      if (exists) setActiveChat(id);
-    } else {
-      setActiveChat(null);
-    }
-  }, [id, chats, setActiveChat]);
-
-  const activeChat = activeChatId ? getChat(activeChatId) : undefined;
-  const showEmpty = !activeChat || activeChat.messages.length === 0;
-
-  const handleConnectVault = () => {
-    const readyBooks = scopedBooks.filter((book) => book.status === "ready");
-    const projectName = activeProject?.name ?? "Research Vault";
-    const chatMessages = activeChat?.messages ?? [];
-    const markdown = [
-      "---",
-      "source: reszvault",
-      `project: ${projectName}`,
-      `exported: ${new Date().toISOString()}`,
-      "---",
-      "",
-      `# ${projectName}`,
-      "",
-      "## Sources",
-      readyBooks.length
-        ? readyBooks
-            .map((book) => `- [[${book.title}]] - ${book.chunkCount} indexed chunks`)
-            .join("\n")
-        : "- No PDFs uploaded yet.",
-      "",
-      "## Source Graph",
-      readyBooks.length
-        ? readyBooks
-            .map((book) => `- [[${projectName}]] -> [[${book.title}]]`)
-            .join("\n")
-        : "- Upload PDFs to build the project graph.",
-      "",
-      "## Current Chat",
-      chatMessages.length
-        ? chatMessages
-            .map((message) => {
-              const speaker = message.role === "user" ? "User" : "ReszVault";
-              return `### ${speaker}\n\n${message.content || "_Streaming..._"}`;
-            })
-            .join("\n\n")
-        : "_No chat messages yet._",
-      "",
-    ].join("\n");
-
-    const filename = `${slugify(projectName)}-reszvault.md`;
-    downloadMarkdown(filename, markdown);
-
-    const obsidianUrl = `obsidian://new?name=${encodeURIComponent(
-      filename.replace(/\.md$/i, ""),
-    )}&content=${encodeURIComponent(markdown.slice(0, 14000))}`;
-    window.setTimeout(() => {
-      window.location.href = obsidianUrl;
-    }, 80);
-
-    setConnectState("done");
-    window.setTimeout(() => setConnectState("idle"), 2200);
+    : null;
+  const setTab = (next: string) =>
+    setParams(next === "chat" ? {} : { tab: next });
+  const notify = (message: string) => {
+    setToast(message);
+    window.setTimeout(() => setToast(""), 2400);
   };
 
-  const handleSend = async (text: string) => {
-    let chatId = activeChatId;
-    if (!chatId) {
-      chatId = createChat();
-      navigate(`${chatBasePath}/${chatId}`, { replace: true });
+  useEffect(() => {
+    void fetchBooks(project.id);
+  }, [project.id, fetchBooks]);
+  useEffect(() => {
+    if (!processing.length) return;
+    const timer = window.setInterval(() => {
+      void fetchBooks(project.id);
+    }, 2500);
+    return () => window.clearInterval(timer);
+  }, [processing.length, fetchBooks, project.id]);
+  useEffect(() => {
+    setActiveChat(activeChat?.id ?? null);
+  }, [activeChat?.id, setActiveChat]);
+  useEffect(
+    () => () => {
+      controller.current?.abort();
+    },
+    [],
+  );
+  useEffect(() => {
+    const media = window.matchMedia("(min-width: 1101px)");
+    const resize = (event: MediaQueryListEvent) =>
+      setDetailsOpen(event.matches);
+    media.addEventListener("change", resize);
+    return () => media.removeEventListener("change", resize);
+  }, []);
+
+  const uploadFiles = async (files: File[]) => {
+    if (uploading) return;
+    if (files.some((file) => !file.name.toLowerCase().endsWith(".pdf"))) {
+      useBookStore.setState({ error: "Please choose PDF documents." });
+      return;
     }
+    for (const file of files) {
+      try {
+        await uploadPdf(file, undefined, project.id);
+      } catch {
+        break;
+      }
+    }
+  };
+  const chooseFiles = (event: ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files ?? []);
+    event.target.value = "";
+    void uploadFiles(files);
+  };
+  const send = async (text: string) => {
+    if (blocked || !selectedIds.length) return;
+    const chatId = activeChat?.id ?? createChat(project.id);
+    if (!activeChat) navigate(`${base}/${chatId}`, { replace: true });
     addMessage(chatId, { role: "user", content: text });
     const assistantId = addMessage(chatId, { role: "assistant", content: "" });
-
-    if (processingBooks.length > 0) {
-      setMessageContent(
-        chatId,
-        assistantId,
-        `Your vault is still indexing ${processingBooks.length} PDF${processingBooks.length === 1 ? "" : "s"}. Wait until indexing finishes so I can answer from the complete project context.`,
-      );
-      return;
-    }
-
-    if (selectedBookIds.length === 0) {
-      setMessageContent(
-        chatId,
-        assistantId,
-        "Upload one or more PDFs first, then I can answer from your sources.",
-      );
-      return;
-    }
-
+    const abort = new AbortController();
+    controller.current = abort;
     setIsSending(true);
-
-    let pending = "";
-    let rafId: number | null = null;
-    const flush = () => {
-      if (pending) {
-        appendToMessage(chatId!, assistantId, pending);
-        pending = "";
-      }
-      rafId = null;
-    };
-    const scheduleFlush = () => {
-      if (rafId === null) rafId = requestAnimationFrame(flush);
-    };
-
+    let received = false;
     try {
       await streamQuestion(
         text,
         {
           onToken: (token) => {
-            pending += token;
-            scheduleFlush();
+            received = true;
+            appendToMessage(chatId, assistantId, token);
           },
-          onReplace: (answer) => {
-            if (rafId !== null) cancelAnimationFrame(rafId);
-            pending = "";
-            setMessageContent(chatId!, assistantId, answer);
+          onReplace: (answer) => setMessageContent(chatId, assistantId, answer),
+          onDone: (meta) => {
+            if (meta.answer)
+              setMessageContent(chatId, assistantId, meta.answer);
+            setMessageSources(chatId, assistantId, meta.sourcesUsed);
           },
-          onError: (message) => {
-            throw new Error(message);
-          },
+          onError: (message) => setMessageContent(chatId, assistantId, message),
         },
-        { bookIds: selectedBookIds },
+        { bookIds: selectedIds, signal: abort.signal },
       );
-      if (rafId !== null) cancelAnimationFrame(rafId);
-      flush();
-    } catch (err) {
-      if (rafId !== null) cancelAnimationFrame(rafId);
-      const message =
-        err instanceof Error ? err.message : "Something went wrong.";
-      const friendlyMessage =
-        /database connection|vault index|No book context|Sources not found/i.test(message)
-          ? "I could not reach a source for this chat. Upload a PDF or choose an indexed project source."
-          : message;
-      setMessageContent(
-        chatId,
-        assistantId,
-        friendlyMessage,
-      );
+      if (abort.signal.aborted && !received)
+        setMessageContent(
+          chatId,
+          assistantId,
+          "Response stopped. You can ask again whenever you're ready.",
+        );
     } finally {
       setIsSending(false);
+      controller.current = null;
     }
   };
-
-  return (
-    <div className="rv-chat-shell h-[100dvh] overflow-hidden bg-[#e8eaee] p-0 text-[#242731]">
-      <div className="mx-auto flex h-full w-full overflow-hidden bg-[#f8f7f5]">
-        {/* Desktop sidebar */}
-        <div className="hidden md:flex">
-          <Sidebar activeChatId={activeChatId} />
-        </div>
-
-        {/* Mobile overlay */}
-        <AnimatePresence>
-          {sidebarOpen && (
-            <>
-              <motion.div
-                className="fixed inset-0 z-40 bg-black/20 backdrop-blur-sm md:hidden"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                onClick={() => setSidebarOpen(false)}
-              />
-              <motion.div
-                className="fixed inset-y-0 left-0 z-50 md:hidden"
-                initial={{ x: -300 }}
-                animate={{ x: 0 }}
-                exit={{ x: -300 }}
-                transition={{ duration: 0.2, ease: "easeOut" }}
-              >
-                <Sidebar
-                  activeChatId={activeChatId}
-                  onCloseMobile={() => setSidebarOpen(false)}
-                />
-              </motion.div>
-            </>
-          )}
-        </AnimatePresence>
-
-        {/* Main */}
-        <main className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <header className="flex min-h-[92px] shrink-0 items-center gap-4 border-b border-[#e7ddd2] bg-[#fffdfa] px-5 md:px-9">
-          <button
-            type="button"
-            onClick={() => setSidebarOpen(true)}
-            className="rounded-lg p-2 text-[#6f7480] hover:bg-[#f4eee8] md:hidden"
-            aria-label="Open menu"
-          >
-            <svg
-              width="20"
-              height="20"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.8"
-            >
-              <path d="M3 6h18M3 12h18M3 18h18" />
-            </svg>
-          </button>
-          <img
-            src="/github-avatar.png"
-            alt=""
-            className="h-11 w-11 shrink-0 rounded-full object-cover shadow-sm"
-          />
-          <div className="min-w-0 flex-1">
-            <div className="flex min-w-0 items-center gap-2">
-              <p className="truncate text-lg font-semibold tracking-[-0.01em] text-[#1f222a]">
-                {activeChat?.title && activeChat.title !== "New chat"
-                  ? activeChat.title
-                  : "ReszVault"}
-              </p>
-            </div>
-            <p className="mt-0.5 truncate text-sm text-[#7a7268]">
-              Source-grounded workspace
-            </p>
+  const saveAnswer = (text: string) => {
+    updateProject(project.id, {
+      notes: [notes.trim(), `## Research insight\n\n${text}`]
+        .filter(Boolean)
+        .join("\n\n"),
+    });
+    setTab("notes");
+    notify("Added to your notebook");
+  };
+  const format = (kind: string) => {
+    const input = noteInput.current;
+    const start = input?.selectionStart ?? notes.length;
+    const end = input?.selectionEnd ?? notes.length;
+    const text = notes.slice(start, end);
+    const inserted =
+      kind === "bold"
+        ? `**${text || "bold text"}**`
+        : kind === "italic"
+          ? `_${text || "italic text"}_`
+          : `\n${(text || "List item")
+              .split("\n")
+              .map((line) => `- ${line}`)
+              .join("\n")}`;
+    updateProject(project.id, {
+      notes: notes.slice(0, start) + inserted + notes.slice(end),
+    });
+    setNotePreview(false);
+    requestAnimationFrame(() => {
+      noteInput.current?.focus();
+      noteInput.current?.setSelectionRange(start, start + inserted.length);
+    });
+  };
+  const download = () => {
+    exportVault(project);
+    notify("Vault exported as Markdown");
+  };
+  const sourceTools = (
+    <>
+      <BookPicker
+        projectId={project.id}
+        onUpload={() => fileInput.current?.click()}
+        onPreview={setPreview}
+      />
+      <section className="detail-section">
+        <h3>Vault details</h3>
+        <dl className="properties">
+          <div>
+            <dt>Indexed sources</dt>
+            <dd>{readyBooks.length}</dd>
           </div>
-          <div className="ml-auto flex items-center gap-2">
+          <div>
+            <dt>Knowledge chunks</dt>
+            <dd>
+              {scopedBooks.reduce((sum, book) => sum + book.chunkCount, 0)}
+            </dd>
+          </div>
+          <div>
+            <dt>Notebook</dt>
+            <dd>{words} words</dd>
+          </div>
+        </dl>
+        <div className="grounded-note">
+          <Icon name="sparkle" size={16} />
+          <span>Answers are drawn from the sources in this vault.</span>
+        </div>
+      </section>
+    </>
+  );
+  const noteTools = (
+    <>
+      <section>
+        <h3>Paper style</h3>
+        <p className="details-copy">A little room to make it yours.</p>
+        <div className="paper-swatches">
+          {["paper", "blue", "sage", "sand", "lilac"].map((paper) => (
             <button
-              type="button"
-              onClick={handleConnectVault}
-              className="hidden h-11 items-center gap-2 rounded-xl border border-[#ead9c8] bg-[#fffdfa] px-4 text-sm font-semibold text-[#5d5144] transition hover:border-[#e8791a] hover:bg-[#fff7ef] sm:inline-flex"
-              aria-label="Connect Obsidian"
+              key={paper}
+              className={`paper-swatch ${paper} ${editor.paper === paper ? "selected" : ""}`}
+              aria-label={`${paper} paper`}
+              aria-pressed={editor.paper === paper}
+              onClick={() => editor.update({ paper })}
             >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-                <path d="M7 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8ZM17 4a3 3 0 1 0 0 6 3 3 0 0 0 0-6ZM17 14a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z" />
-                <path d="m10.3 9.3 3.9-1.5M10.4 14.8l3.5 1.3" />
-              </svg>
-              <span>{connectState === "done" ? "Exported" : "Connect"}</span>
+              Aa
+              {editor.paper === paper && (
+                <span>
+                  <Icon name="check" size={10} />
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+      </section>
+      <section className="detail-section">
+        <h3>Text editor</h3>
+        <label className="font-picker">
+          <span>Aa</span>
+          <small>Font family</small>
+          <select
+            aria-label="Notebook font"
+            value={editor.font}
+            onChange={(event) => editor.update({ font: event.target.value })}
+          >
+            <option value="serif">Editorial serif</option>
+            <option value="sans">Clean sans</option>
+            <option value="mono">Monospace</option>
+          </select>
+        </label>
+        <div className="editor-tools">
+          {[
+            ["bold", "Bold"],
+            ["italic", "Italic"],
+            ["list", "List"],
+          ].map(([icon, label]) => (
+            <button key={icon} onClick={() => format(icon)}>
+              <span>
+                <Icon name={icon} size={18} />
+              </span>
+              {label}
+            </button>
+          ))}
+        </div>
+        <div className="font-size-control">
+          <span>Text size</span>
+          <div>
+            <button
+              aria-label="Decrease text size"
+              disabled={editor.fontSize <= 14}
+              onClick={() =>
+                editor.update({ fontSize: Math.max(14, editor.fontSize - 1) })
+              }
+            >
+              −
+            </button>
+            <span>{editor.fontSize}</span>
+            <button
+              aria-label="Increase text size"
+              disabled={editor.fontSize >= 24}
+              onClick={() =>
+                editor.update({ fontSize: Math.min(24, editor.fontSize + 1) })
+              }
+            >
+              +
             </button>
           </div>
-        </header>
+        </div>
+      </section>
+      <section className="detail-section">
+        <h3>On this page</h3>
+        <dl className="properties">
+          <div>
+            <dt>Words</dt>
+            <dd>{words}</dd>
+          </div>
+          <div>
+            <dt>Characters</dt>
+            <dd>{notes.length}</dd>
+          </div>
+        </dl>
+        <p className="saved-note">
+          <Icon name="check" size={13} />
+          Saved on this device
+        </p>
+      </section>
+    </>
+  );
 
-        <section className="min-h-0 min-w-0 flex-1">
-          {showEmpty && !isSending ? (
-            <EmptyState
-              onSend={handleSend}
-              disabled={composerDisabled}
-              placeholder={composerPlaceholder}
-              statusNotice={statusNotice}
-            />
-          ) : activeChat ? (
-            <ChatWindow
-              chat={activeChat}
-              onSend={handleSend}
-              isSending={isSending}
-              disabled={composerDisabled}
-              placeholder={composerPlaceholder}
-              statusNotice={statusNotice}
-              streamingMessageId={
-                isSending
-                  ? activeChat.messages[activeChat.messages.length - 1]?.id
-                  : undefined
-              }
-            />
-          ) : (
-            <EmptyState
-              onSend={handleSend}
-              disabled={composerDisabled}
-              placeholder={composerPlaceholder}
-              statusNotice={statusNotice}
+  return (
+    <WorkspaceFrame
+      className="vault-workspace"
+      aside={
+        <>
+          {detailsOpen && (
+            <button
+              className="details-backdrop"
+              onClick={() => setDetailsOpen(false)}
+              aria-label="Close details"
             />
           )}
-        </section>
-        </main>
+          <aside
+            className={`details-panel vault-details ${detailsOpen ? "is-open" : "is-collapsed"}`}
+          >
+            <div className="details-heading">
+              <h2>{tab === "notes" ? "Make it your own" : "Your context"}</h2>
+              <button
+                className="icon-button"
+                aria-label="Hide details"
+                onClick={() => setDetailsOpen(false)}
+              >
+                <Icon name="panel" size={17} />
+              </button>
+            </div>
+            <div className="details-body">
+              {tab === "notes" ? noteTools : sourceTools}
+            </div>
+            <div className="details-footer">
+              <button onClick={download}>
+                <Icon name="download" size={17} />
+                Export vault
+                <Icon name="arrow" size={14} />
+              </button>
+              <span className="footer-caption">Take your ideas anywhere.</span>
+            </div>
+          </aside>
+        </>
+      }
+    >
+      <input
+        ref={fileInput}
+        type="file"
+        accept="application/pdf,.pdf"
+        multiple
+        className="visually-hidden"
+        aria-label="Upload PDF documents"
+        onChange={chooseFiles}
+      />
+      <PageHeader
+        title={project.name}
+        actions={
+          <>
+            <button className="header-export" onClick={download}>
+              <Icon name="download" size={15} />
+              <span>Export</span>
+            </button>
+            <button
+              className="icon-button details-toggle"
+              onClick={() => setDetailsOpen((value) => !value)}
+              aria-label="Show details"
+              aria-expanded={detailsOpen}
+            >
+              <Icon name="panel" />
+            </button>
+          </>
+        }
+      />
+      <div className="vault-heading">
+        <div>
+          <span className="eyebrow">YOUR RESEARCH, CONNECTED</span>
+          <h1>{project.name}</h1>
+          <p>{project.description}</p>
+        </div>
+        <button
+          className={`icon-button pin-vault ${project.pinned ? "selected" : ""}`}
+          aria-label={project.pinned ? "Unpin vault" : "Pin vault"}
+          aria-pressed={Boolean(project.pinned)}
+          onClick={() => updateProject(project.id, { pinned: !project.pinned })}
+        >
+          <Icon name="pin" size={17} />
+        </button>
       </div>
-    </div>
+      <div className="vault-tabbar">
+        <nav className="workspace-tabs" aria-label="Vault sections">
+          {[
+            ["chat", "chat", "Ask sources"],
+            ["notes", "note", "Notebook"],
+            ["sources", "file", "Sources"],
+          ].map(([value, icon, label]) => (
+            <button
+              key={value}
+              className={tab === value ? "active" : ""}
+              aria-current={tab === value ? "page" : undefined}
+              onClick={() => setTab(value)}
+            >
+              <Icon name={icon} size={16} />
+              {label}
+              {value === "sources" && <small>{scopedBooks.length}</small>}
+            </button>
+          ))}
+        </nav>
+        <span className="vault-save-state">
+          <span className="status-dot" />
+          {processing.length ? "Indexing sources" : "Private vault"}
+        </span>
+      </div>
+      <div
+        className={`vault-content ${tab === "notes" ? "notebook-content" : ""}`}
+      >
+        {tab === "chat" &&
+          (activeChat?.messages.length ? (
+            <>
+              <div className="conversation-heading">
+                <span>{activeChat.title}</span>
+                <button
+                  className="icon-button"
+                  aria-label="Delete conversation"
+                  onClick={() => {
+                    if (
+                      window.confirm(
+                        "Delete this conversation? Your sources and notebook will be kept.",
+                      )
+                    ) {
+                      deleteChat(activeChat.id);
+                      navigate(base);
+                    }
+                  }}
+                >
+                  <Icon name="trash" size={14} />
+                </button>
+              </div>
+              <ChatWindow
+                chat={activeChat}
+                onSend={(text) => void send(text)}
+                onSave={saveAnswer}
+                onStop={() => controller.current?.abort()}
+                isSending={isSending}
+                disabled={blocked || !readyBooks.length}
+                placeholder={placeholder}
+                statusNotice={notice}
+                streamingMessageId={
+                  isSending ? activeChat.messages.at(-1)?.id : undefined
+                }
+              />
+            </>
+          ) : (
+            <EmptyState
+              onSend={(text) => void send(text)}
+              onUpload={() => fileInput.current?.click()}
+              sourceCount={readyBooks.length}
+              disabled={blocked}
+              placeholder={placeholder}
+              statusNotice={notice}
+            />
+          ))}
+        {tab === "notes" && (
+          <>
+            <div className="notebook-toolbar">
+              <span>
+                <Icon name="note" size={15} />
+                Research notes
+              </span>
+              <div>
+                <span className="note-save">
+                  <Icon name="check" size={12} />
+                  Saved
+                </span>
+                <button
+                  className={`button subtle ${notePreview ? "selected" : ""}`}
+                  onClick={() => setNotePreview((value) => !value)}
+                >
+                  <Icon name={notePreview ? "note" : "eye"} size={14} />
+                  {notePreview ? "Edit" : "Preview"}
+                </button>
+              </div>
+            </div>
+            <div className="notebook-scroll">
+              <article
+                className={`note-paper ${editor.paper} font-${editor.font}`}
+                style={{ fontSize: editor.fontSize }}
+              >
+                <span className="note-date">
+                  {new Date(project.createdAt).toLocaleDateString(undefined, {
+                    month: "long",
+                    day: "numeric",
+                    year: "numeric",
+                  })}
+                </span>
+                <h2>{project.name}</h2>
+                <div className="note-rule" />
+                {notePreview ? (
+                  <div className="markdown note-preview">
+                    {notes.trim() ? (
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                        {notes}
+                      </ReactMarkdown>
+                    ) : (
+                      <p className="muted">
+                        Your thoughts will find a home here.
+                      </p>
+                    )}
+                  </div>
+                ) : (
+                  <textarea
+                    ref={noteInput}
+                    className="note-editor"
+                    aria-label="Research notes"
+                    value={notes}
+                    onChange={(event) =>
+                      updateProject(project.id, { notes: event.target.value })
+                    }
+                    placeholder={
+                      "Start with a thought.\n\nCapture what matters, connect your ideas, or save an answer from your sources."
+                    }
+                  />
+                )}
+                <footer className="paper-footer">
+                  <span>{words} words</span>
+                  <span>YOUR PERSONAL NOTEBOOK</span>
+                </footer>
+              </article>
+            </div>
+          </>
+        )}
+        {tab === "sources" && (
+          <div className="source-library">
+            <div className="section-label">
+              <div>
+                <h2>A foundation for your ideas.</h2>
+                <p>
+                  {scopedBooks.length} document
+                  {scopedBooks.length === 1 ? "" : "s"} in this vault
+                </p>
+              </div>
+              <button
+                className="button"
+                onClick={() => fileInput.current?.click()}
+                disabled={uploading}
+              >
+                <Icon name="plus" size={16} />
+                Add PDFs
+              </button>
+            </div>
+            <button
+              className="drop-zone"
+              disabled={uploading}
+              onClick={() => fileInput.current?.click()}
+              onDragOver={(event) => event.preventDefault()}
+              onDrop={(event) => {
+                event.preventDefault();
+                void uploadFiles(Array.from(event.dataTransfer.files));
+              }}
+            >
+              <span className="soft-icon">
+                <Icon name="upload" size={24} />
+              </span>
+              <strong>
+                {uploading
+                  ? "Preparing your source…"
+                  : "Drop your documents here"}
+              </strong>
+              <span>or click to browse · PDF documents</span>
+            </button>
+            <div className="library-source-list">
+              {scopedBooks.map((book) => (
+                <button key={book.id} onClick={() => setPreview(book)}>
+                  <span className="pdf-icon">
+                    <Icon name="file" size={22} />
+                  </span>
+                  <span>
+                    <strong>{book.title}</strong>
+                    <small>
+                      {book.filename} · {book.chunkCount} chunks
+                    </small>
+                  </span>
+                  <span className={`source-status ${book.status}`}>
+                    <i />
+                    {book.status === "ready"
+                      ? "Indexed"
+                      : book.status === "failed"
+                        ? "Failed"
+                        : "Indexing"}
+                  </span>
+                  <Icon name="eye" size={17} />
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+      {preview && (
+        <PdfPreview book={preview} onClose={() => setPreview(null)} />
+      )}
+      <div className={`toast ${toast ? "visible" : ""}`} role="status">
+        {toast && (
+          <>
+            <Icon name="check" size={16} />
+            {toast}
+          </>
+        )}
+      </div>
+    </WorkspaceFrame>
   );
 }
