@@ -21,6 +21,7 @@ from pydantic import BaseModel
 
 from document_parser import Chunk, split_pdf_chunks
 from rag import BookContext, answer_question
+from github_research import register_github_routes
 from storage import UPLOAD_DIR, db, init_db, row_to_dict, utc_now
 
 
@@ -69,6 +70,14 @@ app.add_middleware(
 )
 
 
+@app.middleware("http")
+async def prevent_account_response_caching(request: Request, call_next):
+    response = await call_next(request)
+    if request.url.path.startswith(("/api/auth/", "/api/github/")):
+        response.headers["cache-control"] = "no-store"
+    return response
+
+
 class ChatRequest(BaseModel):
     question: str
     bookId: str | None = None
@@ -111,7 +120,7 @@ def serialize_user(row: dict | None) -> dict | None:
     }
 
 
-def create_session(response: Response, user_id: str) -> dict:
+def create_session(response: Response, user_id: str, github_token: str | None = None) -> dict:
     token = secrets.token_urlsafe(32)
     expires = datetime.now(timezone.utc) + timedelta(days=SESSION_DAYS)
 
@@ -120,6 +129,9 @@ def create_session(response: Response, user_id: str) -> dict:
             "INSERT INTO sessions (token, user_id, expires_at, created_at) VALUES (?, ?, ?, ?)",
             (token, user_id, expires.isoformat(), utc_now()),
         )
+
+        if github_token:
+            conn.execute("INSERT INTO github_sessions VALUES (?, ?)", (token, github_token))
 
     response.set_cookie(
         SESSION_COOKIE,
@@ -151,7 +163,7 @@ def owner_key(
     guest_id: str | None,
     header_token: str | None = None,
 ) -> str | None:
-    user = get_user_from_session(session_token) or (get_user_from_session(header_token) if header_token else None)
+    user = get_user_from_session(header_token or session_token)
     if user:
         return f"user:{user['id']}"
     if guest_id and re.match(r"^[a-zA-Z0-9_-]{8,100}$", guest_id):
@@ -332,13 +344,19 @@ def health() -> dict:
 
 @app.get("/auth/providers")
 def providers() -> dict:
-    return {"google": bool(os.getenv("GOOGLE_CLIENT_ID") and os.getenv("GOOGLE_CLIENT_SECRET"))}
+    return {
+        "google": bool(os.getenv("GOOGLE_CLIENT_ID") and os.getenv("GOOGLE_CLIENT_SECRET")),
+        "github": all(os.getenv(key) for key in ("GITHUB_CLIENT_ID", "GITHUB_CLIENT_SECRET", "GITHUB_APP_SLUG")),
+    }
 
 
 @app.get("/api/auth/session")
 @app.get("/api/auth/get-session")
-def get_session(reszvault_session: Annotated[str | None, Cookie(alias=SESSION_COOKIE)] = None) -> dict:
-    user = get_user_from_session(reszvault_session)
+def get_session(
+    reszvault_session: Annotated[str | None, Cookie(alias=SESSION_COOKIE)] = None,
+    x_session_token: Annotated[str | None, Header()] = None,
+) -> dict:
+    user = get_user_from_session(x_session_token or reszvault_session)
     if not user:
         return {"user": None, "session": None}
     return {
@@ -384,11 +402,13 @@ def sign_in_email(payload: EmailAuthRequest, response: Response) -> dict:
 
 
 @app.post("/api/auth/sign-out")
-@app.get("/api/auth/sign-out")
-def sign_out(response: Response, reszvault_session: Annotated[str | None, Cookie(alias=SESSION_COOKIE)] = None) -> dict:
-    if reszvault_session:
-        with db() as conn:
-            conn.execute("DELETE FROM sessions WHERE token = ?", (reszvault_session,))
+def sign_out(
+    response: Response,
+    reszvault_session: Annotated[str | None, Cookie(alias=SESSION_COOKIE)] = None,
+    x_session_token: Annotated[str | None, Header()] = None,
+) -> dict:
+    with db() as conn:
+        conn.execute("DELETE FROM sessions WHERE token IN (?, ?)", (reszvault_session, x_session_token))
     response.delete_cookie(SESSION_COOKIE, path="/")
     return {"success": True}
 
@@ -626,3 +646,6 @@ def chat_stream(
 @app.get("/")
 def root() -> dict:
     return {"name": "ReszVault Python API", "status": "ok"}
+
+
+register_github_routes(app, create_session)

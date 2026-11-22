@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../../hooks/useAuth";
 import { useChatStore } from "../../store/chatStore";
@@ -9,21 +10,29 @@ type SidebarProps = {
   onCloseMobile?: () => void;
 };
 
-export function Sidebar({ onCloseMobile }: SidebarProps) {
+export function Sidebar({ activeChatId, onCloseMobile }: SidebarProps) {
   const navigate = useNavigate();
   const location = useLocation();
   const { user, logout } = useAuth();
-  const { createChat, setActiveChat } = useChatStore();
+  const [logoutError, setLogoutError] = useState("");
+  const { chats, createChat, setActiveChat } = useChatStore();
   const activeProjectId = useProjectStore((state) => state.activeProjectId);
   const projects = useProjectStore((state) => state.projects);
   const createProject = useProjectStore((state) => state.createProject);
   const isGuestRoute = location.pathname.startsWith("/guest");
   const chatBasePath = isGuestRoute ? "/guest" : "/app";
+  const repositoryChats = isGuestRoute || !user ? [] : chats.filter(
+    (chat) => chat.repository && chat.ownerId === user.id,
+  );
 
   const handleNewChat = () => {
-    const id = createChat();
-    setActiveChat(id);
-    navigate(`${chatBasePath}/${id}`);
+    if (!isGuestRoute) {
+      setActiveChat(null);
+      navigate("/app");
+    } else {
+      const id = createChat();
+      navigate(`${chatBasePath}/${id}`);
+    }
     onCloseMobile?.();
   };
 
@@ -84,7 +93,7 @@ export function Sidebar({ onCloseMobile }: SidebarProps) {
           <BookPicker projectId={activeProjectId} />
         </div>
 
-        <div className="min-h-0 flex-1 px-6 py-4">
+        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
           <button
             type="button"
             onClick={handleNewProject}
@@ -95,9 +104,22 @@ export function Sidebar({ onCloseMobile }: SidebarProps) {
             </svg>
             Project
           </button>
+          {repositoryChats.length > 0 && (
+            <nav className="mt-4 grid gap-1" aria-label="Repository chats">
+              {repositoryChats.map((chat) => (
+                <Link key={chat.id} to={`/app/${chat.id}`} onClick={onCloseMobile}
+                  aria-current={activeChatId === chat.id ? "page" : undefined}
+                  className="rounded-lg px-3 py-2 text-sm hover:bg-[#fbf3eb] aria-[current=page]:bg-[#fbf3eb]">
+                  <span className="block truncate">{chat.title}</span>
+                  <small className="block truncate text-[#7b7268]">{chat.repository}</small>
+                </Link>
+              ))}
+            </nav>
+          )}
         </div>
 
         <div className="border-t border-[#e8ddd0] p-4">
+          {logoutError && <p className="text-sm text-red-700" role="alert">{logoutError}</p>}
           {user ? (
             <div className="flex items-center gap-3 rounded-lg px-2 py-2 transition-colors hover:bg-[#fbf3eb]">
               {userAvatar ? (
@@ -120,7 +142,10 @@ export function Sidebar({ onCloseMobile }: SidebarProps) {
               </div>
               <button
                 type="button"
-                onClick={() => logout()}
+                onClick={() => {
+                  setLogoutError("");
+                  void logout().catch((error: Error) => setLogoutError(error.message));
+                }}
                 className="shrink-0 rounded-lg p-1.5 text-[#8b909a] transition-colors hover:bg-[#f4eee8] hover:text-[#24262d]"
                 aria-label="Sign out"
                 title="Sign out"

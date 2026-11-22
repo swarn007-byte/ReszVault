@@ -18,11 +18,35 @@ type SessionData = {
 };
 
 type AuthResult = {
-  data?: unknown;
+  data?: { user?: AuthUser; session?: { token?: string } };
   error?: { message?: string } | null;
 };
 
 const SESSION_TOKEN_KEY = "reszvault-session-token";
+const GITHUB_VERIFIER_KEY = "reszvault-github-verifier";
+
+export async function startGitHubSignIn() {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  const verifier = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier));
+  const challenge = btoa(String.fromCharCode(...new Uint8Array(digest)))
+    .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  window.sessionStorage.setItem(GITHUB_VERIFIER_KEY, verifier);
+  window.location.assign(`/api/auth/github/start?challenge=${encodeURIComponent(challenge)}`);
+}
+
+export async function finishGitHubSignIn(code: string) {
+  const verifier = window.sessionStorage.getItem(GITHUB_VERIFIER_KEY);
+  window.sessionStorage.removeItem(GITHUB_VERIFIER_KEY);
+  if (!verifier) throw new Error("Start GitHub sign-in again in this tab.");
+  const result = await authFetch("/api/auth/github/exchange", {
+    method: "POST",
+    body: JSON.stringify({ code, verifier }),
+  });
+  if (!result.data?.session?.token) {
+    throw new Error(result.error?.message ?? "GitHub sign-in could not be completed.");
+  }
+}
 
 export function getSessionToken(): string {
   if (typeof window === "undefined") return "";
@@ -42,17 +66,25 @@ async function authFetch(path: string, init?: RequestInit): Promise<AuthResult> 
   const response = await fetch(`${getApiBase()}${path}`, {
     ...init,
     credentials: "include",
+    signal: AbortSignal.timeout(12000),
     headers: {
       "Content-Type": "application/json",
+      "x-session-token": getSessionToken(),
       ...(init?.headers ?? {}),
     },
   });
+  if (!response.headers.get("content-type")?.includes("application/json")) {
+    return { error: { message: "The authentication service is unavailable. Try again shortly." } };
+  }
   const body = (await response.json().catch(() => ({}))) as AuthResult & {
     detail?: string;
     data?: { session?: { token?: string } };
   };
   if (!response.ok) {
     return { error: { message: body.detail ?? body.error?.message ?? `Request failed (${response.status})` } };
+  }
+  if (path.endsWith("/email") && !body.error && (!body.data?.user?.id || !body.data.session?.token)) {
+    return { error: { message: "Authentication could not be completed. Try again." } };
   }
   // Store session token from response for Vercel proxy compatibility
   if (body.data?.session?.token) {
@@ -64,11 +96,14 @@ async function authFetch(path: string, init?: RequestInit): Promise<AuthResult> 
 async function loadSession(): Promise<SessionData> {
   const response = await fetch(`${getApiBase()}/api/auth/session`, {
     credentials: "include",
+    signal: AbortSignal.timeout(12000),
     headers: {
       "x-session-token": getSessionToken(),
     },
   });
-  if (!response.ok) return { user: null, session: null };
+  if (!response.ok || !response.headers.get("content-type")?.includes("application/json")) {
+    throw new Error("The authentication service is unavailable. Try again shortly.");
+  }
   return (await response.json()) as SessionData;
 }
 
@@ -139,11 +174,12 @@ export const authClient = {
     },
   },
   signOut: async () => {
-    setSessionToken("");
-    return authFetch("/api/auth/sign-out", {
+    const result = await authFetch("/api/auth/sign-out", {
       method: "POST",
       body: JSON.stringify({}),
     });
+    if (result.error) throw new Error(result.error.message ?? "Could not sign out.");
+    setSessionToken("");
   },
 };
 

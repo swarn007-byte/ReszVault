@@ -5,6 +5,8 @@ import { Sidebar } from "../Sidebar/Sidebar";
 import { useChatStore } from "../../store/chatStore";
 import { EmptyState } from "../EmptyState/EmptyState";
 import { ChatWindow } from "../ChatWindow/ChatWindow";
+import { RepositoryPicker } from "../RepositoryPicker";
+import { askGitHub, githubError } from "../../api/github";
 import { streamQuestion } from "../../api/chat";
 import { useBookStore } from "../../store/bookStore";
 import { useProjectStore } from "../../store/projectStore";
@@ -29,7 +31,7 @@ function downloadMarkdown(filename: string, content: string) {
   URL.revokeObjectURL(url);
 }
 
-export function AppShell() {
+export function AppShell({ userId }: { userId?: string }) {
   const navigate = useNavigate();
   const location = useLocation();
   const { id } = useParams<{ id?: string }>();
@@ -120,13 +122,20 @@ export function AppShell() {
   useEffect(() => {
     if (id) {
       const exists = chats.some((c) => c.id === id);
-      if (exists) setActiveChat(id);
+      setActiveChat(exists ? id : null);
     } else {
       setActiveChat(null);
     }
   }, [id, chats, setActiveChat]);
 
-  const activeChat = activeChatId ? getChat(activeChatId) : undefined;
+  const selectedChat = id ? getChat(id) : undefined;
+  const activeChat = selectedChat?.repository && selectedChat.ownerId !== userId ? undefined : selectedChat;
+  const repository = activeChat?.repository;
+  const chooseRepository = !isGuestRoute && !activeChat;
+  const startRepositoryChat = (name: string) => {
+    const chatId = createChat(name, userId);
+    navigate(`/app/${chatId}`);
+  };
   const showEmpty = !activeChat || activeChat.messages.length === 0;
 
   const handleConnectVault = () => {
@@ -183,13 +192,26 @@ export function AppShell() {
   };
 
   const handleSend = async (text: string) => {
-    let chatId = activeChatId;
+    let chatId = activeChat?.id;
+    if (!chatId && !isGuestRoute) return;
     if (!chatId) {
       chatId = createChat();
       navigate(`${chatBasePath}/${chatId}`, { replace: true });
     }
     addMessage(chatId, { role: "user", content: text });
     const assistantId = addMessage(chatId, { role: "assistant", content: "" });
+
+    if (repository) {
+      setIsSending(true);
+      try {
+        setMessageContent(chatId, assistantId, await askGitHub(repository, text));
+      } catch (error) {
+        setMessageContent(chatId, assistantId, githubError(error));
+      } finally {
+        setIsSending(false);
+      }
+      return;
+    }
 
     if (processingBooks.length > 0) {
       setMessageContent(
@@ -332,7 +354,7 @@ export function AppShell() {
               </p>
             </div>
             <p className="mt-0.5 truncate text-sm text-[#7a7268]">
-              Source-grounded workspace
+              {repository ?? "Source-grounded workspace"}
             </p>
           </div>
           <div className="ml-auto flex items-center gap-2">
@@ -352,7 +374,12 @@ export function AppShell() {
         </header>
 
         <section className="min-h-0 min-w-0 flex-1">
-          {showEmpty && !isSending ? (
+          {chooseRepository ? (
+            <RepositoryPicker onSelect={startRepositoryChat} />
+          ) : repository && activeChat ? (
+            <ChatWindow chat={activeChat} onSend={handleSend} isSending={isSending}
+              disabled={isSending} placeholder="Ask about a pull request or issue…" />
+          ) : showEmpty && !isSending ? (
             <EmptyState
               onSend={handleSend}
               disabled={composerDisabled}

@@ -57,6 +57,26 @@ def init_db() -> None:
               created_at TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS github_sessions (
+              session_token TEXT PRIMARY KEY REFERENCES sessions(token) ON DELETE CASCADE,
+              access_token TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS github_oauth (
+              state TEXT PRIMARY KEY,
+              verifier TEXT NOT NULL,
+              browser_challenge TEXT NOT NULL,
+              expires_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS github_handoffs (
+              code TEXT PRIMARY KEY,
+              browser_challenge TEXT NOT NULL,
+              user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              access_token TEXT NOT NULL,
+              expires_at INTEGER NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS books (
               id TEXT PRIMARY KEY,
               owner_key TEXT NOT NULL,

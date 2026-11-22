@@ -1,14 +1,16 @@
-import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { Link, Navigate, useNavigate, useSearchParams } from "react-router-dom";
-import { authClient, useSession, setSessionToken } from "../lib/auth-client";
+import { Link, Navigate, useLocation, useNavigate, useSearchParams } from "react-router-dom";
+import { authClient, useSession, setSessionToken, startGitHubSignIn, finishGitHubSignIn } from "../lib/auth-client";
 
 type Mode = "sign-in" | "sign-up";
-type ProviderConfig = { google: boolean };
+type ProviderConfig = { google: boolean; github: boolean };
 
 export function AuthPage() {
-  const { data, isPending } = useSession();
+  const { data, isPending, refetch } = useSession();
   const navigate = useNavigate();
+  const { hash } = useLocation();
+  const exchangeStarted = useRef(false);
   const [searchParams, setSearchParams] = useSearchParams();
   const [mode, setMode] = useState<Mode>("sign-in");
   const [name, setName] = useState("");
@@ -17,8 +19,22 @@ export function AuthPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [providers, setProviders] = useState<ProviderConfig>({
-    google: true,
+    google: false,
+    github: false,
   });
+
+  const githubCode = new URLSearchParams(hash.slice(1)).get("github_code");
+  useEffect(() => {
+    if (!githubCode || exchangeStarted.current) return;
+    exchangeStarted.current = true;
+    window.history.replaceState(window.history.state, "", window.location.pathname + window.location.search);
+    finishGitHubSignIn(githubCode)
+      .then(() => navigate("/app", { replace: true }))
+      .catch((failure: Error) => {
+        navigate("/login", { replace: true });
+        setError(failure.message);
+      });
+  }, [githubCode, navigate]);
 
   // Capture session_token from Google OAuth redirect (Vercel strips Set-Cookie)
   useEffect(() => {
@@ -26,8 +42,9 @@ export function AuthPage() {
     if (token) {
       setSessionToken(token);
       setSearchParams({}, { replace: true });
+      void refetch();
     }
-  }, [searchParams, setSearchParams]);
+  }, [searchParams, setSearchParams, refetch]);
 
   useEffect(() => {
     let alive = true;
@@ -37,14 +54,15 @@ export function AuthPage() {
         if (alive && config) setProviders(config);
       })
       .catch(() => {
-        if (alive) setProviders({ google: true });
+        if (alive) setProviders({ google: false, github: false });
       });
     return () => {
       alive = false;
     };
   }, []);
 
-  if (!isPending && data?.user) return <Navigate to="/projects" replace />;
+  if (githubCode) return <main className="rv-auth-page" role="status">Completing GitHub sign-in…</main>;
+  if (!isPending && data?.user && !error && !searchParams.has("github_error")) return <Navigate to="/projects" replace />;
 
   const isSignUp = mode === "sign-up";
 
@@ -120,12 +138,12 @@ export function AuthPage() {
       >
         <section className="rv-auth-card">
           <div className="rv-auth-card-head">
-            <span>{isSignUp ? "Create account" : "Authentication"}</span>
+            <span>ReszVault</span>
             <h2>{isSignUp ? "Create your workspace." : "Sign in to continue."}</h2>
             <p>
               {isSignUp
-                ? "Create a project space for PDFs, source selection, and saved chats."
-                : "Access saved projects, uploaded sources, and previous research threads."}
+                ? "Connect GitHub to research pull requests and issues in your repositories."
+                : "Connect GitHub to start a repository chat."}
             </p>
           </div>
 
@@ -153,6 +171,18 @@ export function AuthPage() {
             </button>
           </div>
 
+          <button className="rv-auth-submit" type="button"
+            onClick={() => void startGitHubSignIn().catch((failure: Error) => setError(failure.message))}>
+            Continue with GitHub
+          </button>
+          {searchParams.has("github_error") && (
+            <p className="rv-auth-error" role="alert">
+              {searchParams.get("github_error") === "unavailable"
+                ? "GitHub sign-in is not configured yet."
+                : "GitHub authorization failed. Try signing in again."}
+            </p>
+          )}
+          {searchParams.has("error") && <p className="rv-auth-error" role="alert">{searchParams.get("error")}</p>}
           <div className="rv-social-grid">
             <button
               type="button"

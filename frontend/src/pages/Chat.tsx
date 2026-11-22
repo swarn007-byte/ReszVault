@@ -8,15 +8,16 @@ import { useEffect } from "react";
 export function ChatPage({ allowGuest = false }: { allowGuest?: boolean }) {
   const { user, isLoading } = useAuth();
   const activeProject = useProjectStore((state) => state.activeProject());
+  const githubUser = user?.id.startsWith("github_") ?? false;
   const selectDefaultProject = useProjectStore((state) => state.selectDefaultProject);
 
   useEffect(() => {
-    if (allowGuest && !activeProject) {
+    if ((allowGuest || githubUser) && !activeProject) {
       selectDefaultProject();
     }
-  }, [activeProject, allowGuest, selectDefaultProject]);
+  }, [activeProject, allowGuest, githubUser, selectDefaultProject]);
 
-  if (isLoading) {
+  if (isLoading && !allowGuest) {
     return (
       <div className="rv-auth-page">
         <div className="rv-loader" />
@@ -25,7 +26,7 @@ export function ChatPage({ allowGuest = false }: { allowGuest?: boolean }) {
   }
 
   if (!user && !allowGuest) return <Navigate to="/login" replace />;
-  if (allowGuest && !activeProject) {
+  if ((allowGuest || githubUser) && !activeProject) {
     return (
       <div className="rv-auth-page">
         <div className="rv-loader" />
@@ -34,5 +35,5 @@ export function ChatPage({ allowGuest = false }: { allowGuest?: boolean }) {
   }
   if (!activeProject) return <Navigate to="/projects" replace />;
 
-  return <AppShell />;
+  return <AppShell userId={allowGuest ? undefined : user?.id} />;
 }

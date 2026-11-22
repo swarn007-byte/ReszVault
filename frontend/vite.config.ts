@@ -14,6 +14,14 @@ export default defineConfig({
   },
   server: {
     proxy: {
+      "/auth/providers": {
+        target: "http://localhost:3000",
+        changeOrigin: false,
+      },
+      "/api/github": {
+        target: "http://localhost:3000",
+        changeOrigin: false,
+      },
       "/api/auth": {
         target: "http://localhost:3000",
         changeOrigin: false,
