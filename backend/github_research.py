@@ -78,7 +78,9 @@ def github_request(path, token=None, payload=None, *, json_payload=None):
 
 
 def evidence_payload(evidence, *, full_windows=False):
-    remaining = 24_000
+    # Leave room for the question, JSON formatting and completion on Groq's
+    # 8k-token/minute tier. The SWE-QA mode keeps its full-window inputs.
+    remaining = 12_000
     sources = []
     for index, item in enumerate(evidence, 1):
         excerpt = item.text if full_windows else item.text[:min(4000, remaining)]
