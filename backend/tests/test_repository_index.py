@@ -127,6 +127,17 @@ class RepositoryIndexTest(unittest.TestCase):
                 return {"sha": "fixture-ref"}
             if path == "/repos/acme/tools/git/trees/fixture-ref":
                 return {"tree": [{"path": "internal", "type": "tree"}, {"path": "README.md", "type": "blob"}]}
+            if path == "/repos/acme/tools/git/trees/fixture-ref?recursive=1":
+                return {"tree": [{"path": "internal", "type": "tree"},
+                                 {"path": "internal/worker.py", "type": "blob"},
+                                 {"path": "README.md", "type": "blob", "size": 70, "sha": "doc"}]}
+            if path == "/repos/acme/tools/readme?ref=fixture-ref":
+                readme = "# Tools\n\n## Architecture\n\nRequest → queue → worker.\n\n## Installation\n\nInstall dependencies."
+                return {"type": "file", "path": "README.md", "encoding": "base64",
+                        "content": base64.b64encode(readme.encode()).decode()}
+            if path == "/repos/acme/tools/contents/main.go?ref=fixture-ref":
+                return {"type": "file", "path": "main.go", "encoding": "base64",
+                        "content": base64.b64encode(b"package main\n\nfunc main() {}").decode()}
             if path.startswith(("/search/issues?", "/repos/acme/tools/pulls?")):
                 return {"items": []} if path.startswith("/search") else []
             return self.fixture(path, token, **kwargs)
@@ -161,6 +172,19 @@ class RepositoryIndexTest(unittest.TestCase):
             self.assertIn("**internal/**", folders["answer"])
             self.assertNotIn("README", folders["answer"])
             self.assertTrue(folders["sources"][0]["url"].endswith("/tree/fixture-ref"))
+            for question, expected, source in (
+                ("tell me folder details", "worker\\.py", "/tree/fixture-ref"),
+                ("give me project pipeline", "Request → queue → worker.", "/README.md#L3"),
+                ("readme.md", "## Installation", "/README.md"),
+                ("give main.go", "func main() {}", "/main.go"),
+            ):
+                result = client.post("/api/github/chat", headers=headers, json={
+                    "repository": "acme/tools", "question": question,
+                }).json()
+                self.assertIn(expected, result["answer"])
+                self.assertTrue(result["sources"][0]["url"].endswith(source))
+                if question == "give me project pipeline":
+                    self.assertNotIn("Installation", result["answer"])
             follow_up = client.post("/api/github/chat", headers=headers, json={
                 "repository": "acme/tools", "question": "Where is that implemented?",
                 "previous_questions": ["How do I initialize the SQLite database?", "What can you access?"],

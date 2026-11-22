@@ -476,6 +476,10 @@ def repository_intent(question):
     if re.fullmatch(r"(?:hi|hey|hello)(?: there| reszvault)?", text):
         return "greeting"
     text = re.sub(r"^(?:(?:hi|hey|hello|please|can you|could you|would you) )+", "", text)
+    if re.fullmatch(r"(?:tell me|give me|show me|explain|describe|list) (?:the )?(?:folder|directory) (?:details|structure)(?: please)?|(?:folder|directory) (?:details|structure)", text):
+        return "folder_details"
+    if re.fullmatch(r"(?:(?:give me|tell me|show me|explain|describe)(?: about)? (?:the )?)?(?:(?:project|repo(?:sitory)?) )?(?:pipeline|architecture|workflow|data flow|request flow)(?: of (?:the |this )?(?:project|repo(?:sitory)?))?(?: please)?", text):
+        return "pipeline"
     if re.fullmatch(r"(?:tell me|explain|describe)(?: about)? (?:this |the )?(?:repo(?:sitory)?|project|codebase)(?: please)?", text):
         return "overview"
     if re.fullmatch(
