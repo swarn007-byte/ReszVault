@@ -59,7 +59,12 @@ export const useProjectStore = create<ProjectState>()(
         return id;
       },
 
-      selectDefaultProject: () => set({ activeProjectId: starterProjects[0].id }),
+      selectDefaultProject: () => set((state) => ({
+        activeProjectId: starterProjects[0].id,
+        projects: state.projects.some((project) => project.id === starterProjects[0].id)
+          ? state.projects
+          : [...state.projects, ...starterProjects],
+      })),
       selectProject: (id) => set({ activeProjectId: id }),
 
       activeProject: () => {

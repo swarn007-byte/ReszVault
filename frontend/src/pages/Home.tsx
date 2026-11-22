@@ -269,20 +269,20 @@ export function Home() {
           <div className="copy-hero-container">
             <span className="copy-hero-badge">
               <span className="copy-pulse-dot" />
-              Source-grounded workspace for document research
+              GitHub research workspace for open-source contributors
             </span>
             <h1>
-              Trust every answer.
+              Understand a repository faster.
               <br />
-              <span>Chat across your sources.</span>
+              <span>Ask about pull requests and issues.</span>
             </h1>
             <p>
-              Upload multiple PDFs, ask once, and let ReszVault retrieve the
-              connected context before it answers.
+              Sign in with GitHub, choose a repository, and ask about its
+              pull requests and issues.
             </p>
             <div className="copy-hero-actions">
-              <button className="copy-btn-primary" type="button" onClick={openSandbox}>
-                Open Sandbox
+              <button className="copy-btn-primary" type="button" onClick={openAuth}>
+                Sign in with GitHub
                 <ArrowIcon />
               </button>
               <button className="copy-btn-secondary" type="button" onClick={openGuest}>

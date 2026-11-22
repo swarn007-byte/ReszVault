@@ -11,6 +11,8 @@ export type Message = {
 export type Chat = {
   id: string;
   title: string;
+  repository?: string;
+  ownerId?: string;
   messages: Message[];
   updatedAt: string;
   createdAt: string;
@@ -26,7 +28,7 @@ type ChatState = {
   setHistoryLoading: (loading: boolean) => void;
   setIsSending: (sending: boolean) => void;
   setActiveChat: (id: string | null) => void;
-  createChat: () => string;
+  createChat: (repository?: string, ownerId?: string) => string;
   deleteChat: (id: string) => void;
   addMessage: (chatId: string, message: Omit<Message, "id" | "createdAt">) => string;
   appendToMessage: (chatId: string, messageId: string, delta: string) => void;
@@ -76,12 +78,14 @@ export const useChatStore = create<ChatState>()(
       setIsSending: (sending) => set({ isSending: sending }),
       setActiveChat: (id) => set({ activeChatId: id }),
 
-      createChat: () => {
+      createChat: (repository, ownerId) => {
         const id = crypto.randomUUID();
         const now = new Date().toISOString();
         const chat: Chat = {
           id,
           title: "New chat",
+          repository,
+          ownerId,
           messages: [],
           updatedAt: now,
           createdAt: now,
@@ -166,7 +170,7 @@ export const useChatStore = create<ChatState>()(
         return { ...state, chats, activeChatId };
       },
       partialize: (state) => ({
-        chats: cleanPersistedChats(state.chats),
+        chats: cleanPersistedChats(state.chats.filter((chat) => !chat.repository)),
         activeChatId: state.activeChatId,
       }),
       onRehydrateStorage: () => (state) => {

@@ -55,3 +55,26 @@ uvicorn main:app --host 0.0.0.0 --port 3000 --reload
 The root `render.yaml` points Render at this FastAPI service.
 
 Set production environment variables in Render instead of committing secrets.
+
+## GitHub sign-in and repository chat
+
+Create a GitHub App with **read-only** repository permissions for Metadata,
+Pull requests, and Issues. Enable **Request user authorization (OAuth) during
+installation** only if you want GitHub to request authorization while users
+install the app. Leave webhooks disabled. Allow installation on any account if
+the app should support repositories outside the app owner's account.
+
+Set the GitHub App callback URL to
+`https://reszvault.vercel.app/api/auth/github/callback` for production, or
+`http://localhost:5173/api/auth/github/callback` for local development. Copy the
+app's OAuth client ID, client secret, and URL slug into `GITHUB_CLIENT_ID`,
+`GITHUB_CLIENT_SECRET`, and `GITHUB_APP_SLUG` in the backend environment. Set
+`GITHUB_CALLBACK_ORIGIN` to the matching frontend origin. Configure the secret
+in Render for production.
+
+GitHub applies the intersection of the user's repository access and the app's
+permissions. For private repositories, users can install the app on selected
+repositories and then choose one when starting a chat. Public repository
+records can be summarized with the configured Groq model. Private repository
+chats show matching GitHub records and links without sending their content to
+Groq.

@@ -1,6 +1,10 @@
 {
   "rewrites": [
     {
+      "source": "/api/github/:path*",
+      "destination": "https://reszvault.onrender.com/api/github/:path*"
+    },
+    {
       "source": "/api/auth/(.*)",
       "destination": "https://reszvault.onrender.com/api/auth/$1"
     },
