@@ -51,9 +51,10 @@ function isBrokenIndexMessage(message: Message) {
 
 function cleanPersistedChats(chats: Chat[] = []) {
   return chats
-    .filter((chat) => !chat.messages.some(isBrokenIndexMessage))
+    .filter((chat) => chat.repository ? !!chat.ownerId : !chat.messages.some(isBrokenIndexMessage))
     .map((chat) => {
-      const messages = chat.messages.filter((message) => !isBrokenIndexMessage(message));
+      const messages = chat.messages.filter((message) => message.content.trim() &&
+        (chat.repository || !isBrokenIndexMessage(message)));
       const firstUser = messages.find((message) => message.role === "user");
       return {
         ...chat,
@@ -170,7 +171,7 @@ export const useChatStore = create<ChatState>()(
         return { ...state, chats, activeChatId };
       },
       partialize: (state) => ({
-        chats: cleanPersistedChats(state.chats.filter((chat) => !chat.repository)),
+        chats: cleanPersistedChats(state.chats),
         activeChatId: state.activeChatId,
       }),
       onRehydrateStorage: () => (state) => {

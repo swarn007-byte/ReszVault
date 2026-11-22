@@ -89,7 +89,9 @@ export function Settings() {
                     <dt className="text-[11px] uppercase tracking-wider text-text-muted">
                       Saved chats (local)
                     </dt>
-                    <dd className="mt-1 text-text">{chats.length}</dd>
+                    <dd className="mt-1 text-text">
+                      {chats.filter((chat) => !chat.repository || chat.ownerId === user?.id).length}
+                    </dd>
                   </div>
                 </dl>
               )}
