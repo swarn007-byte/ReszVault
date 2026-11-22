@@ -8,9 +8,10 @@ import { BookPicker } from "./BookPicker";
 type SidebarProps = {
   activeChatId: string | null;
   onCloseMobile?: () => void;
+  repositoryMode?: boolean;
 };
 
-export function Sidebar({ activeChatId, onCloseMobile }: SidebarProps) {
+export function Sidebar({ activeChatId, onCloseMobile, repositoryMode = false }: SidebarProps) {
   const navigate = useNavigate();
   const location = useLocation();
   const { user, logout } = useAuth();
@@ -71,7 +72,7 @@ export function Sidebar({ activeChatId, onCloseMobile }: SidebarProps) {
               <p className="text-xl font-semibold tracking-[-0.01em] text-[#181a20]">
                 ReszVault
               </p>
-              <p className="mt-1 text-sm text-[#7b7268]">Chat with your sources.</p>
+              <p className="mt-1 text-sm text-[#7b7268]">{repositoryMode ? "GitHub repository chat" : "Chat with your sources."}</p>
             </div>
           </div>
         </div>
@@ -89,12 +90,14 @@ export function Sidebar({ activeChatId, onCloseMobile }: SidebarProps) {
           </button>
         </div>
 
-        <div className="px-6 pb-4">
-          <BookPicker projectId={activeProjectId} />
-        </div>
+        {!repositoryMode && (
+          <div className="px-6 pb-4">
+            <BookPicker projectId={activeProjectId} />
+          </div>
+        )}
 
         <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
-          <button
+          {!repositoryMode && <button
             type="button"
             onClick={handleNewProject}
             className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-[#ead9c8] bg-[#fffdfa] px-4 py-2.5 text-xs font-semibold text-[#6b6258] transition hover:border-[#e8791a] hover:bg-[#fff7ef]"
@@ -103,7 +106,7 @@ export function Sidebar({ activeChatId, onCloseMobile }: SidebarProps) {
               <path d="M12 5v14M5 12h14" />
             </svg>
             Project
-          </button>
+          </button>}
           {repositoryChats.length > 0 && (
             <nav className="mt-4 grid gap-1" aria-label="Repository chats">
               {repositoryChats.map((chat) => (
@@ -138,7 +141,9 @@ export function Sidebar({ activeChatId, onCloseMobile }: SidebarProps) {
                 <p className="truncate text-sm font-medium text-[#24262d]">
                   {displayName}
                 </p>
-                <p className="truncate text-[10px] text-[#8b909a]">{user.email}</p>
+                {user.id.startsWith("github_") ? (
+                  <p className="truncate text-[10px] text-[#8b909a]">GitHub account</p>
+                ) : user.email && <p className="truncate text-[10px] text-[#8b909a]">{user.email}</p>}
               </div>
               <button
                 type="button"

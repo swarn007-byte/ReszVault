@@ -115,7 +115,7 @@ def serialize_user(row: dict | None) -> dict | None:
     return {
         "id": row["id"],
         "name": row["name"],
-        "email": row["email"],
+        "email": None if row["id"].startswith("github_") else row["email"],
         "image": row.get("image"),
     }
 

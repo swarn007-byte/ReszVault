@@ -84,7 +84,8 @@ class RepositoryIndexTest(unittest.TestCase):
             conn.execute("INSERT INTO github_sessions VALUES (?, ?)", ("session", "token"))
 
         repo = {"id": 91, "full_name": "acme/tools", "html_url": "https://github.com/acme/tools",
-                "default_branch": "main", "size": 10, "private": True}
+                "default_branch": "main", "size": 10, "private": True,
+                "description": "A tool for managing SQLite databases."}
         def provider(path, token=None, **kwargs):
             self.assertEqual(token, "token")
             if path == "/repos/acme/tools":
@@ -107,6 +108,15 @@ class RepositoryIndexTest(unittest.TestCase):
             self.assertEqual(response.status_code, 200)
             self.assertIn("Use the run script", response.json()["answer"])
             self.assertIn("README.md", {source["title"] for source in response.json()["sources"]})
+            for question, expected in (
+                ("summarise", "A tool for managing SQLite databases"),
+                ("what are things u have access to", "Documentation: 1"),
+            ):
+                result = client.post("/api/github/chat", headers=headers, json={
+                    "repository": "acme/tools", "question": question,
+                }).json()
+                self.assertIn(expected, result["answer"])
+                self.assertNotIn("I found these excerpts", result["answer"])
             model.assert_not_called()
 
     def test_signed_webhook_invalidates_index(self):

@@ -323,10 +323,66 @@ def live_evidence(get, repo, question):
             yield record_evidence(item)
 
 
-def retrieve(repo_id, question, live, include_files=True):
+def load_snapshot(repo_id):
     with db() as conn:
         row = conn.execute("SELECT chunks, vectors FROM repository_indexes WHERE repo_id = ?", (repo_id,)).fetchone()
-    indexed = [Evidence(**item) for item in json.loads(row["chunks"])] if row and row["chunks"] else []
+    evidence = [Evidence(**item) for item in json.loads(row["chunks"])] if row and row["chunks"] else []
+    return evidence, row["vectors"] if row else None
+
+
+def repository_intent(question):
+    text = " ".join(tokenize_text(question))
+    if re.fullmatch(r"(?:please )?(?:summari[sz]e|summary|overview)(?: (?:this |the )?(?:repo(?:sitory)?|project|codebase|it))?(?: please)?", text):
+        return "overview"
+    if re.fullmatch(r"(?:give me )?(?:a |an )?(?:summary|overview)(?: of (?:this |the )?(?:repo(?:sitory)?|project|codebase))?", text):
+        return "overview"
+    if re.fullmatch(r"(?:what (?:is|does) (?:this |the )?(?:repo(?:sitory)?|project|codebase)(?: about| do)?|what is this)", text):
+        return "overview"
+    if re.search(r"(?:what|which).{0,40}(?:access to|(?:sources|files|data|content).{0,20}(?:access|see|index)|(?:is|have you|did you) indexed)|^(?:list|show)(?: me)? (?:the |your |indexed )?(?:sources|indexed content)\b", text):
+        return "inventory"
+    return None
+
+
+def inventory(evidence):
+    groups = (
+        ("Documentation", {"doc"}),
+        ("Source files", {"code"}),
+        ("Pull requests and patches", {"PR", "diff"}),
+        ("Issues", {"issue"}),
+        ("Comments, reviews and discussions", {"discussion", "review", "review comment", "GitHub Discussion", "discussion comment"}),
+    )
+    lines = []
+    for label, kinds in groups:
+        unique_items = {item.url.split("#L", 1)[0] for item in evidence if item.kind in kinds}
+        if unique_items:
+            lines.append(f"- {label}: {len(unique_items)}")
+    return lines
+
+
+def readme_excerpt(evidence):
+    for item in evidence:
+        if item.kind != "doc" or not PurePosixPath(item.title).name.lower().startswith("readme"):
+            continue
+        paragraphs = []
+        for block in re.split(r"\n\s*\n", item.text):
+            lines = block.strip().splitlines()
+            if not lines or lines[0].lstrip().startswith(("#", ">", "!", "[", "<", "```", "-", "|")):
+                continue
+            paragraph = " ".join(line.strip() for line in lines)
+            if len(paragraph) > 100 or re.match(r"\w.+[.!?]$", paragraph):
+                paragraphs.append(paragraph)
+            if len(paragraphs) == 2:
+                break
+        if paragraphs:
+            excerpt = "\n\n".join(paragraphs)
+            if len(excerpt) > 650:
+                excerpt = excerpt[:650].rsplit(" ", 1)[0] + "…"
+            return item, excerpt
+    return None, ""
+
+
+def retrieve(repo_id, question, live, include_files=True):
+    indexed, embeddings = load_snapshot(repo_id)
     candidates = live + indexed
     if not candidates:
         return []
@@ -335,9 +391,9 @@ def retrieve(repo_id, question, live, include_files=True):
     tokens = [terms(f"{item.kind} {item.title} {item.title} {item.text}") for item in candidates]
     keyword = BM25Okapi(tokens).get_scores(query) if any(tokens) and query else np.zeros(len(candidates))
     semantic = np.zeros(len(candidates))
-    if row and row["vectors"] and indexed and query and env_bool("REPOSITORY_LOCAL_EMBEDDINGS"):
+    if embeddings and indexed and query and env_bool("REPOSITORY_LOCAL_EMBEDDINGS"):
         try:
-            vectors = np.frombuffer(row["vectors"], dtype=np.float32).reshape((len(indexed), -1))
+            vectors = np.frombuffer(embeddings, dtype=np.float32).reshape((len(indexed), -1))
             semantic[len(live):] = np.maximum(0, vectors @ embed_texts([question])[0] - 0.20)
         except Exception:
             logger.warning("Repository vector search unavailable; using keywords.")

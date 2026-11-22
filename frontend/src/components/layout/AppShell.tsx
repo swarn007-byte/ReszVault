@@ -291,7 +291,7 @@ export function AppShell({ userId }: { userId?: string }) {
       <div className="mx-auto flex h-full w-full overflow-hidden bg-[#f8f7f5]">
         {/* Desktop sidebar */}
         <div className="hidden md:flex">
-          <Sidebar activeChatId={activeChatId} />
+          <Sidebar activeChatId={activeChatId} repositoryMode={chooseRepository || !!repository} />
         </div>
 
         {/* Mobile overlay */}
@@ -314,6 +314,7 @@ export function AppShell({ userId }: { userId?: string }) {
               >
                 <Sidebar
                   activeChatId={activeChatId}
+                  repositoryMode={chooseRepository || !!repository}
                   onCloseMobile={() => setSidebarOpen(false)}
                 />
               </motion.div>

@@ -17,7 +17,8 @@ from pydantic import BaseModel, Field
 
 from rag import groq_complete
 from repository_index import (
-    claim_sync, index_key, index_status, live_evidence, mark_stale, retrieve, synchronize_repository,
+    claim_sync, index_key, index_status, inventory, live_evidence, load_snapshot, mark_stale,
+    readme_excerpt, repository_intent, retrieve, synchronize_repository,
 )
 from storage import db, utc_now
 
@@ -213,6 +214,37 @@ def register_github_routes(app: FastAPI, create_session):
             repo["readable_ref"] = ref["sha"]
         return repo
 
+    def answer_repository_question(repo, intent, status):
+        indexed, _ = load_snapshot(index_key(repo))
+        if not repo["readable_ref"]:
+            indexed = [item for item in indexed if item.kind not in {"doc", "code"}]
+        sources = []
+        if intent == "inventory":
+            lines = inventory(indexed)
+            if lines:
+                list_text = "\n".join(lines)
+                answer = f"I can search these indexed sources in **{repo['full_name']}**:\n\n{list_text}"
+                answer += "\n\nYou can also ask about a specific PR or issue by number."
+            else:
+                answer = f"No sources are indexed yet for **{repo['full_name']}**."
+        else:
+            readme, excerpt = readme_excerpt(indexed)
+            answer = f"**{repo['full_name']}**"
+            description = (repo.get("description") or "").strip()
+            if description:
+                answer += f"\n\n{markdown_text(description)}"
+                sources.append({"id": 1, "title": repo["full_name"], "url": repo["html_url"], "kind": "repository"})
+            if readme:
+                answer += f"\n\n{markdown_text(excerpt)}"
+                sources.append({"id": len(sources) + 1, "title": readme.title, "url": readme.url, "kind": readme.kind})
+            if not sources:
+                answer += "\n\nI don't have a README introduction or a GitHub description to summarize."
+        if status["state"] == "syncing":
+            answer += "\n\nThe repository index is still syncing."
+        elif status["state"] == "failed":
+            answer += "\n\nThe last sync failed. Use **Sync repository** to retry."
+        return {"answer": answer, "sources": sources}
+
     @app.post("/api/github/chat")
     def repository_chat(request: IncomingRequest, payload: RepositoryQuestion, tasks: BackgroundTasks):
         token = github_token(request)
@@ -221,9 +253,12 @@ def register_github_routes(app: FastAPI, create_session):
         if not question:
             raise HTTPException(422, "Enter a question about the repository.")
         start_sync(tasks, token, repo)
+        status = index_status(index_key(repo))
+        intent = repository_intent(question)
+        if intent:
+            return answer_repository_question(repo, intent, status)
         live = list(live_evidence(lambda path: github_request(path, token), repo, question))
         evidence = retrieve(index_key(repo), question, live, include_files=bool(repo["readable_ref"]))
-        status = index_status(index_key(repo))
         if not evidence:
             message = "I could not find evidence for that question in this repository."
             if status["state"] == "syncing":
