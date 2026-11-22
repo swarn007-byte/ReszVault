@@ -1,3 +1,4 @@
+import { SessionRecovery } from "../components/SessionRecovery";
 import { AppShell } from "../components/layout/AppShell";
 import { Navigate } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth";
@@ -6,7 +7,7 @@ import { useEffect } from "react";
 
 /** Main chat interface — sidebar + message area */
 export function ChatPage({ allowGuest = false }: { allowGuest?: boolean }) {
-  const { user, isLoading } = useAuth();
+  const { user, isLoading, error, refetch } = useAuth();
   const activeProject = useProjectStore((state) => state.activeProject());
   const githubUser = user?.id.startsWith("github_") ?? false;
   const selectDefaultProject = useProjectStore((state) => state.selectDefaultProject);
@@ -25,6 +26,7 @@ export function ChatPage({ allowGuest = false }: { allowGuest?: boolean }) {
     );
   }
 
+  if (!user && !allowGuest && error) return <SessionRecovery onRetry={refetch} />;
   if (!user && !allowGuest) return <Navigate to="/login" replace />;
   if ((allowGuest || githubUser) && !activeProject) {
     return (

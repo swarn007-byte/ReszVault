@@ -93,18 +93,33 @@ async function authFetch(path: string, init?: RequestInit): Promise<AuthResult> 
   return body;
 }
 
-async function loadSession(): Promise<SessionData> {
-  const response = await fetch(`${getApiBase()}/api/auth/session`, {
-    credentials: "include",
-    signal: AbortSignal.timeout(12000),
-    headers: {
-      "x-session-token": getSessionToken(),
-    },
-  });
-  if (!response.ok || !response.headers.get("content-type")?.includes("application/json")) {
-    throw new Error("The authentication service is unavailable. Try again shortly.");
+async function loadSession(signal?: AbortSignal): Promise<SessionData> {
+  // Render can take longer than a single request to wake after an idle period.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const timeout = AbortSignal.timeout(30000);
+      const response = await fetch(`${getApiBase()}/api/auth/session`, {
+        credentials: "include",
+        cache: "no-store",
+        signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+        headers: { "x-session-token": getSessionToken() },
+      });
+      if (!response.ok || !response.headers.get("content-type")?.includes("application/json")) {
+        throw new Error("Session check failed");
+      }
+      const session = await response.json() as SessionData | null;
+      if (!session || (session.user !== null && typeof session.user?.id !== "string")) {
+        throw new Error("Invalid session response");
+      }
+      return session;
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      if (attempt === 1) throw new Error("Couldn’t check your session. Try again shortly.", { cause: error });
+      await new Promise((resolve) => window.setTimeout(resolve, 750));
+      signal?.throwIfAborted();
+    }
   }
-  return (await response.json()) as SessionData;
+  throw new Error("Couldn’t check your session.");
 }
 
 export function useSession() {
@@ -122,31 +137,29 @@ export function useSession() {
     } catch (err) {
       const nextError = err instanceof Error ? err : new Error("Could not load session");
       setError(nextError);
-      setData({ user: null, session: null });
-      return { user: null, session: null };
+      return null;
     } finally {
       setIsPending(false);
     }
   }, []);
 
   useEffect(() => {
-    let alive = true;
-    loadSession()
+    const request = new AbortController();
+    loadSession(request.signal)
       .then((session) => {
-        if (!alive) return;
+        if (request.signal.aborted) return;
         setData(session);
         setError(null);
       })
       .catch((err: unknown) => {
-        if (!alive) return;
+        if (request.signal.aborted) return;
         setError(err instanceof Error ? err : new Error("Could not load session"));
-        setData({ user: null, session: null });
       })
       .finally(() => {
-        if (alive) setIsPending(false);
+        if (!request.signal.aborted) setIsPending(false);
       });
     return () => {
-      alive = false;
+      request.abort();
     };
   }, []);
 

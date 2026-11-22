@@ -1,3 +1,4 @@
+import { SessionRecovery } from "../components/SessionRecovery";
 import { useState, type FormEvent } from "react";
 import { Navigate, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth";
@@ -6,7 +7,7 @@ import { useProjectStore } from "../store/projectStore";
 export function ProjectsPage() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { user, isLoading } = useAuth();
+  const { user, isLoading, error, refetch } = useAuth();
   const { projects, activeProjectId, createProject, selectProject } = useProjectStore();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -19,6 +20,7 @@ export function ProjectsPage() {
     );
   }
 
+  if (!user && error) return <SessionRecovery onRetry={refetch} />;
   if (!user) return <Navigate to="/login" replace />;
 
   const isManagingProjects = new URLSearchParams(location.search).get("manage") === "1";

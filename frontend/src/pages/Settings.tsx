@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { SessionRecovery } from "../components/SessionRecovery";
+import { useState } from "react";
 import { Link, Navigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { useAuth } from "../hooks/useAuth";
@@ -13,10 +14,6 @@ export function Settings() {
   const { theme } = useThemeStore();
   const [signingOut, setSigningOut] = useState(false);
 
-  useEffect(() => {
-    refetch();
-  }, [refetch]);
-
   const handleSignOut = async () => {
     setSigningOut(true);
     try {
@@ -26,6 +23,7 @@ export function Settings() {
     }
   };
 
+  if (!isLoading && !user && error) return <SessionRecovery onRetry={refetch} />;
   if (!isLoading && !user) {
     return <Navigate to="/login" replace />;
   }
