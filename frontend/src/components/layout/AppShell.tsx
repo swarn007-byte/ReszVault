@@ -205,7 +205,11 @@ export function AppShell({ userId }: { userId?: string }) {
     if (repository) {
       setIsSending(true);
       try {
-        setMessageContent(chatId, assistantId, await askGitHub(repository, text));
+        const previousQuestions = activeChat?.messages
+          .filter((message) => message.role === "user")
+          .slice(-4)
+          .map((message) => message.content.slice(0, 2000));
+        setMessageContent(chatId, assistantId, await askGitHub(repository, text, previousQuestions));
       } catch (error) {
         setMessageContent(chatId, assistantId, githubError(error));
       } finally {
@@ -382,6 +386,7 @@ export function AppShell({ userId }: { userId?: string }) {
             <RepositoryPicker onSelect={startRepositoryChat} />
           ) : repository && activeChat ? (
             <ChatWindow chat={activeChat} onSend={handleSend} isSending={isSending}
+              streamingMessageId={isSending ? activeChat.messages.at(-1)?.id : undefined}
               disabled={isSending} placeholder="Ask about code, docs, pull requests, or issues…" />
           ) : showEmpty && !isSending ? (
             <EmptyState

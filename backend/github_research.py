@@ -1,4 +1,5 @@
 import base64
+from collections import Counter
 import hashlib
 import hmac
 import json
@@ -10,6 +11,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 from uuid import uuid4
+from typing import Annotated
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request as IncomingRequest, Response
 from fastapi.responses import RedirectResponse
@@ -17,13 +19,19 @@ from pydantic import BaseModel, Field
 
 from rag import groq_complete
 from repository_index import (
-    claim_sync, index_key, index_status, inventory, live_evidence, load_snapshot, mark_stale,
-    readme_excerpt, references, repository_intent, retrieve, retrieve_swe_qa, synchronize_repository,
+    claim_sync, contextual_question, excerpt_terms, focused_excerpt, index_key, index_status, inventory,
+    live_evidence, load_snapshot, mark_stale, readme_excerpt, references, repository_intent,
+    retrieval_question, retrieve, retrieve_swe_qa, synchronize_repository,
 )
 from storage import db, utc_now
 from swe_qa_baseline import baseline_answer, baseline_enabled, require_providers
 
 REPO_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_.-]+")
+PR_OVERVIEW = re.compile(
+    r"^(?:what (?:changed|was changed) in|summari[sz]e|give me (?:a )?summary of|overview of)"
+    r"\s+(?:the\s+)?(?:pr|pull request)\s*#?(\d{1,10})[?!.]*$",
+    re.I,
+)
 
 
 def code_challenge(verifier):
@@ -43,6 +51,7 @@ class OAuthHandoff(BaseModel):
 class RepositoryQuestion(BaseModel):
     repository: str = Field(max_length=200, pattern=r"^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_.-]+$")
     question: str = Field(min_length=1, max_length=2000)
+    previous_questions: list[Annotated[str, Field(max_length=2000)]] = Field(default_factory=list, max_length=4)
 
 
 def github_request(path, token=None, payload=None, *, json_payload=None):
@@ -91,6 +100,87 @@ def repository_answer_prompt(repository, question, sources):
         f"Repository: {repository}\nQuestion: {question}\n"
         f"Evidence: {json.dumps(sources, ensure_ascii=False)}"
     )
+
+
+def extractive_repository_answer(sources, query):
+    locating = bool(re.match(r"^\s*(?:where\b|which (?:file|function|class)\b)", query, re.I))
+    explanation_order = {"doc": 0, "code": 1}
+    numbered = bool(references(query))
+    query_terms = excerpt_terms(query)
+    candidates = []
+    for source in sources:
+        text = focused_excerpt(source["text"], query, source["kind"])
+        if text:
+            overlap = query_terms & excerpt_terms(text)
+            if overlap or numbered or source["kind"] not in explanation_order:
+                candidates.append((source, text, overlap))
+    frequency = Counter(term for _, _, matched in candidates for term in matched)
+
+    def rank_excerpt(candidate):
+        source, _, matched = candidate
+        relevance = sum(1 / frequency[term] for term in matched)
+        test_file = bool(re.search(r"(?:^|/)tests?/|(?:^|/)test_|_test\.", source["title"]))
+        if locating:
+            return (source["kind"] != "code", test_file, -relevance)
+        return (explanation_order.get(source["kind"], 2), test_file, -relevance)
+
+    if not numbered:
+        candidates.sort(key=rank_excerpt)
+    excerpts = []
+    selected = []
+    seen = set()
+    for source, text, _ in candidates:
+        key = (source["kind"], source["title"])
+        if key in seen:
+            continue
+        if not locating and source["kind"] in explanation_order and not numbered:
+            # An explanation needs one readable passage and one implementation reference.
+            if any(item["kind"] == source["kind"] for item in selected):
+                continue
+        seen.add(key)
+        item = {**source, "id": len(selected) + 1}
+        selected.append(item)
+        label = f"**[{item['id']}] {markdown_text(item['title'])}**"
+        if item["kind"] in {"code", "diff"}:
+            longest = max((len(run) for run in re.findall(r"\x60+", text)), default=0)
+            fence = chr(96) * max(3, longest + 1)
+            excerpts.append(f"{label}\n\n{fence}text\n{text}\n{fence}")
+        else:
+            excerpts.append(f"{label}\n\n{markdown_text(text)}")
+        if locating and source["kind"] == "code":
+            break
+        if len(selected) == 2:
+            break
+    if not selected:
+        return "I could not find evidence that answers this question in the repository.", []
+    return "Here’s the relevant repository evidence:\n\n" + "\n\n".join(excerpts), selected
+
+
+def pull_request_overview(get, repository, number):
+    path = f"/repos/{repository}/pulls/{number}"
+    try:
+        pull = get(path)
+    except HTTPException as error:
+        if error.status_code == 404:
+            return {"answer": f"I could not find PR #{number} in this repository.", "sources": []}
+        raise
+    files = get(f"{path}/files?per_page=8")
+    state = "merged" if pull.get("merged_at") else pull["state"]
+    total_files = pull["changed_files"]
+    label = "file" if total_files == 1 else "files"
+    answer = (f"**PR #{number} · {markdown_text(pull['title'])}** ({state})\n\n"
+              f"Changed {total_files} {label} with {pull['additions']} additions and {pull['deletions']} deletions.")
+    description = (pull.get("body") or "").strip().split("\n\n", 1)[0]
+    if description:
+        answer += f"\n\n{markdown_text(description[:500])}"
+    if files:
+        changes = "\n".join(f"- {markdown_text(item['filename'])} ({item['status']})" for item in files)
+        answer += f"\n\n{'Changed files' if len(files) == total_files else 'First files listed by GitHub'}\n\n{changes}"
+    url = pull["html_url"]
+    sources = [{"id": 1, "title": pull["title"], "url": url, "kind": "PR"}]
+    if files:
+        sources.append({"id": 2, "title": "Changed files", "url": f"{url}/files", "kind": "diff"})
+    return {"answer": answer, "sources": sources}
 
 
 def register_github_routes(app: FastAPI, create_session):
@@ -287,18 +377,23 @@ def register_github_routes(app: FastAPI, create_session):
         intent = repository_intent(question)
         if intent:
             return answer_repository_question(repo, intent, status)
+        pr_overview = PR_OVERVIEW.fullmatch(question)
+        if pr_overview:
+            return pull_request_overview(lambda path: github_request(path, token), repo["full_name"], pr_overview[1])
+        context = contextual_question(question, payload.previous_questions)
+        query = retrieval_question(context, repo["full_name"])
         use_baseline = (
             baseline_enabled() and not repo["private"] and bool(repo["readable_ref"])
-            and not references(question)
+            and not references(query)
         )
         if use_baseline:
             try:
-                evidence = retrieve_swe_qa(index_key(repo), question)
+                evidence = retrieve_swe_qa(index_key(repo), context)
             except (OSError, ValueError, KeyError, RuntimeError) as error:
                 raise HTTPException(502, "SWE-QA embedding provider is unavailable.") from error
         else:
-            live = list(live_evidence(lambda path: github_request(path, token), repo, question))
-            evidence = retrieve(index_key(repo), question, live, include_files=bool(repo["readable_ref"]))
+            live = list(live_evidence(lambda path: github_request(path, token), repo, query))
+            evidence = retrieve(index_key(repo), query, live, include_files=bool(repo["readable_ref"]))
         if not evidence:
             message = "I could not find evidence for that question in this repository."
             if status["state"] == "syncing":
@@ -308,17 +403,13 @@ def register_github_routes(app: FastAPI, create_session):
         answer = None
         if use_baseline:
             try:
-                answer = baseline_answer(question, sources, citations=True)
+                answer = baseline_answer(context, sources, citations=True)
             except (OSError, ValueError, KeyError, RuntimeError) as error:
                 raise HTTPException(502, "SWE-QA answer provider is unavailable.") from error
         elif not repo["private"]:
-            answer = groq_complete(repository_answer_prompt(repo["full_name"], question, sources))
+            answer = groq_complete(repository_answer_prompt(repo["full_name"], context, sources))
         if not answer:
-            answer = "I found these excerpts from the repository:\n\n" + "\n\n".join(
-                f"**[{source['id']}] {markdown_text(source['title'])}**\n\n"
-                f"{markdown_text(source['text'][:500])}" for source in sources[:4]
-            )
-            sources = sources[:4]
+            answer, sources = extractive_repository_answer(sources, query)
         return {"answer": answer, "sources": [
             {key: value for key, value in source.items() if key != "text"} for source in sources
         ]}

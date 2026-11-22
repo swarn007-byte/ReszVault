@@ -23,11 +23,11 @@ export async function authorizeRepository(repository: string) {
   return data.repository;
 }
 
-export async function askGitHub(repository: string, question: string) {
+export async function askGitHub(repository: string, question: string, previousQuestions: string[] = []) {
   const { data } = await githubApi.post<{
     answer: string;
     sources: { id: number; title: string; url: string; kind: string }[];
-  }>("/api/github/chat", { repository, question });
+  }>("/api/github/chat", { repository, question, previous_questions: previousQuestions });
   const links = data.sources.map(({ id, url, kind }) => `[${id} · ${kind}](${url})`).join(" · ");
   return links ? `${data.answer}\n\nSources: ${links}` : data.answer;
 }

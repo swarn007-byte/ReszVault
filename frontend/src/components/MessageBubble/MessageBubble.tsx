@@ -69,7 +69,7 @@ export function MessageBubble({ message, isStreaming }: Props) {
           )}
         </div>
       ) : isStreaming ? (
-        <div className="flex items-center gap-2 rounded-2xl px-1 py-4">
+        <div className="flex items-center gap-2 rounded-2xl px-1 py-4" role="status" aria-label="Preparing answer">
           <span className="flex gap-1">
             {[0, 1, 2].map((i) => (
               <span

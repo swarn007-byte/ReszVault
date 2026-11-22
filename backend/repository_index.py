@@ -46,7 +46,8 @@ EXCLUDED_DIRS = {".git", "vendor", "node_modules", "dist", "build", "coverage", 
 QUERY_STOP_WORDS = set(
     "a an and are about as at be by can could did do does for from had has have how i in is it "
     "me of on or please repo repository should tell than that the their this to was were what when "
-    "where which who why will with would you".split()
+    "where which who why will with would you u can support supports supported implemented implementation "
+    "located find that it also related question earlier".split()
 )
 
 
@@ -406,7 +407,13 @@ def synchronize_repository(request_github, token, repo, claim):
 
 
 def terms(text):
-    return [term for term in tokenize_text(text) if term not in QUERY_STOP_WORDS]
+    parts = []
+    for identifier in re.findall(r"\b[A-Za-z]\w*(?:_|[a-z0-9][A-Z])\w*\b", text):
+        split = re.sub(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])", " ", identifier)
+        parts.extend(split.lower().replace("_", " ").split())
+    tokens = [term for term in tokenize_text(text) + parts if term not in QUERY_STOP_WORDS]
+    tokens.extend(term[:-3] + "y" for term in tuple(tokens) if len(term) > 4 and term.endswith("ies"))
+    return tokens
 
 
 def references(question):
@@ -472,9 +479,77 @@ def repository_intent(question):
         return "overview"
     if re.fullmatch(r"(?:what (?:is|does) (?:this |the )?(?:repo(?:sitory)?|project|codebase)(?: about| do)?|what is this)", text):
         return "overview"
+    if re.fullmatch(r"(?:what|which sources) can (?:you|u) (?:access|see|search)", text):
+        return "inventory"
     if re.search(r"(?:what|which).{0,40}(?:access to|(?:sources|files|data|content).{0,20}(?:access|see|index)|(?:is|have you|did you) indexed)|^(?:list|show)(?: me)? (?:the |your |indexed )?(?:sources|indexed content)\b", text):
         return "inventory"
     return None
+
+
+FOLLOW_UP = re.compile(
+    r"^(?:where|how|why|what|which)(?: \w+){0,4} (?:it|that|this|they|those|them)(?: |$)"
+)
+
+
+def contextual_question(question, previous_questions):
+    if FOLLOW_UP.match(" ".join(tokenize_text(question))):
+        for previous in reversed(previous_questions):
+            if not repository_intent(previous) and not FOLLOW_UP.match(" ".join(tokenize_text(previous))):
+                return f"{question} Related question: {previous}"
+    return question
+
+
+def retrieval_question(question, repository):
+    # A bare repository name carries no evidence about the actual subject.
+    name = repository.split("/")[-1]
+    return re.sub(rf"(?<![\w./-]){re.escape(name)}(?![\w./-])", " ", question, flags=re.I)
+
+
+def excerpt_terms(text):
+    return {term[:-3] + "y" if len(term) > 4 and term.endswith("ies") else term
+            for term in terms(text)}
+
+
+def focused_excerpt(text, query, kind):
+    query_terms = excerpt_terms(query)
+    named_symbols = {word.lower() for word in re.findall(r"\b[A-Za-z]\w*(?:_|[a-z][A-Z])\w*\b", query)}
+
+    def relevance(fragment):
+        matched = query_terms.intersection(excerpt_terms(fragment))
+        return sum(0.25 if term in {"failed", "failure", "failures", "error", "errors"} else 1 for term in matched)
+
+    if kind in {"code", "diff"}:
+        lines = text.splitlines()
+        if not lines:
+            return ""
+        def line_score(line):
+            score = relevance(line)
+            if named_symbols.intersection(tokenize_text(line)) and re.match(r"^\s*(?:func|def|class|function|fn)\s", line):
+                return score + 4
+            if score and re.search(r"\b(?:log\.|logger\.|console\.)", line):
+                return score - 1
+            if score and re.search(r"(?<!\w)[A-Z][a-z]+[A-Z]\w*\(", line):
+                return score + 0.5
+            return score
+
+        best = max(range(len(lines)), key=lambda i: line_score(lines[i]))
+        return "\n".join(lines[max(0, best - 2):best + 4])[:750]
+    prose = re.sub(r"\x60{3}[\s\S]*?\x60{3}", " ", text)
+    prose = re.sub(r"(?m)^\s*(?:#{1,6} |>|!\[)[^\n]*\n?", "\n\n", prose)
+    paragraphs = [
+        " ".join(block.split())
+        for block in re.split(r"\n\s*\n", prose)
+        if block.strip()
+    ]
+    sentences = [
+        sentence for paragraph in paragraphs
+        for sentence in re.split(r"(?<=[.!?]) +", paragraph)
+        if len(sentence) > 20
+    ]
+    best = max((sentence for sentence in sentences if relevance(sentence)), key=relevance, default="")
+    if not best and kind not in {"doc", "code"}:
+        best = paragraphs[0] if paragraphs else text.strip()
+    return best if len(best) <= 500 else best[:497].rsplit(" ", 1)[0] + "…"
 
 
 def inventory(evidence):
@@ -557,7 +632,7 @@ def rank_evidence(question, indexed, live=(), *, include_files=True, vectors=Non
         overlap = len(query_terms.intersection(tokens[i]))
         score = (2 * bool(item.number in exact) + 0.5 * overlap
                  + max(0, float(keyword[i])) * 0.2 + 5 * float(semantic[i]))
-        if score > 0 or i < len(live):
+        if score > 0 or (i < len(live) and not query):
             scored.append((score, i))
     result = []
     seen = set()

@@ -75,6 +75,18 @@ class RepositoryIndexTest(unittest.TestCase):
         self.assertIn("def rebuild_manifest", result[0].text)
         self.assertTrue(result[0].url.endswith("-L246"))
 
+    def test_pr_overview_works_without_a_description(self):
+        pull = {"title": "Update queue", "state": "closed", "merged_at": "2026-04-01",
+                "changed_files": 10, "additions": 14, "deletions": 3,
+                "html_url": "https://github.com/acme/tools/pull/42", "body": ""}
+        files = [{"filename": "worker.py", "status": "modified"}]
+        result = github_research.pull_request_overview(
+            lambda path: files if "/files?" in path else pull, "acme/tools", "42",
+        )
+        self.assertIn("Changed 10 files with 14 additions and 3 deletions", result["answer"])
+        self.assertIn("First files listed by GitHub", result["answer"])
+        self.assertTrue(result["sources"][-1]["url"].endswith("/pull/42/files"))
+
     def test_snapshot_retrieval_and_sync_lease(self):
         repo = {"id": 91, "full_name": "acme/tools", "html_url": "https://github.com/acme/tools",
                 "size": 10, "default_branch": "main", "readable_ref": "fixture-ref", "private": False}
@@ -132,12 +144,22 @@ class RepositoryIndexTest(unittest.TestCase):
             for question, expected in (
                 ("summarise", "A tool for managing SQLite databases"),
                 ("what are things u have access to", "Documentation: 1"),
+                ("What can you access?", "Documentation: 1"),
             ):
                 result = client.post("/api/github/chat", headers=headers, json={
                     "repository": "acme/tools", "question": question,
                 }).json()
                 self.assertIn(expected, result["answer"])
                 self.assertNotIn("I found these excerpts", result["answer"])
+            follow_up = client.post("/api/github/chat", headers=headers, json={
+                "repository": "acme/tools", "question": "Where is that implemented?",
+                "previous_questions": ["How do I initialize the SQLite database?", "What can you access?"],
+            }).json()
+            self.assertIn("Use the run script", follow_up["answer"])
+            unsupported = client.post("/api/github/chat", headers=headers, json={
+                "repository": "acme/tools", "question": "Do tools support quantum teleportation?",
+            }).json()
+            self.assertEqual(unsupported["sources"], [])
             model.assert_not_called()
 
     def test_swe_qa_mode_runs_public_code_pipeline(self):
