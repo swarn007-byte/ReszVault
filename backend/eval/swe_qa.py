@@ -11,8 +11,9 @@ from github_research import evidence_payload, repository_answer_prompt
 from rag import embed_texts, groq_complete
 from swe_qa_baseline import baseline_answer, dense_top_k, require_providers, voyage_embeddings
 from repository_index import (
-    MAX_ARCHIVE_FILES, MAX_FILE_BYTES, MAX_SOURCE_CHUNKS, Evidence, chunks_for_document,
-    eligible_repository_file, file_priority, rank_evidence, sliding_code_windows, swe_qa_windows,
+    MAX_FILE_BYTES, MAX_SOURCE_CHUNKS, Evidence, chunks_for_document,
+    eligible_repository_file, file_priority, rank_evidence, repository_source_windows,
+    select_archive_paths, sliding_code_windows, swe_qa_windows,
 )
 
 PATH_REFERENCE = re.compile(r"(?<![\w/])(?:[\w.-]+/)*[\w.-]+\.[A-Za-z][\w]*")
@@ -39,7 +40,10 @@ def load_documents(root, scope):
         docs = [item for item in documents if item.kind == "doc"][:16]
         code = [item for item in documents if item.kind == "code"][:16]
         return docs + code
-    return documents[:MAX_ARCHIVE_FILES] if scope == "archive" else documents
+    if scope == "archive":
+        by_name = {item.title: item for item in documents}
+        return [by_name[name] for name in select_archive_paths(by_name)]
+    return documents
 
 
 def known_files(answer, documents):
@@ -50,6 +54,8 @@ def known_files(answer, documents):
 
 
 def as_windows(documents, window, scope):
+    if scope == "archive" and window in {"production", "paper"}:
+        return repository_source_windows(documents, baseline=window == "paper")
     if window == "paper":
         return [chunk for item in documents for chunk in swe_qa_windows(item)]
     chunks = []

@@ -56,6 +56,16 @@ class RepositoryIndexTest(unittest.TestCase):
             return [{"filename": "backend.py", "patch": "- import redis\n+ import sqlite3"}]
         raise AssertionError(path)
 
+    def test_archive_reserves_slots_for_runtime_code(self):
+        docs = [f"docs/manual-{i}.md" for i in range(400)]
+        runtime = [f"src/delivery/worker-{i}.py" for i in range(240)]
+        tests = [f"tests/test_worker_{i}.py" for i in range(80)]
+        selected = set(index.select_archive_paths(docs + runtime + tests))
+        self.assertEqual(len(selected), 250)
+        self.assertEqual(len(selected.intersection(runtime)), 186)
+        self.assertEqual(len(selected.intersection(docs)), 32)
+        self.assertEqual(len(selected.intersection(tests)), 32)
+
     def test_sliding_windows_keep_later_code_searchable(self):
         code = "\n".join([f"line {i}" for i in range(245)] + ["def rebuild_manifest():"])
         item = index.Evidence("code", "manifest.py", "https://github.com/acme/tools/blob/ref/manifest.py", code)

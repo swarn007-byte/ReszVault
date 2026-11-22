@@ -11,6 +11,7 @@ import tarfile
 import time
 from collections import Counter
 from dataclasses import asdict, dataclass, replace
+from itertools import islice, zip_longest
 from pathlib import PurePosixPath
 from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
@@ -196,6 +197,32 @@ def eligible_repository_file(path):
     )
 
 
+def select_archive_paths(paths):
+    docs = []
+    tests = []
+    runtime = {}
+    for path in sorted(paths, key=file_priority):
+        parts = PurePosixPath(path).parts
+        if file_priority(path)[0] < 2:
+            docs.append(path)
+        elif (set(parts[:-1]) & {"test", "tests", "testing", "__tests__"}
+              or parts[-1].startswith("test_") or ".test." in parts[-1]):
+            tests.append(path)
+        else:
+            package = parts[:min(2, len(parts) - 1)]
+            runtime.setdefault(package, []).append(path)
+    runtime_paths = round_robin(runtime.values())
+    selected = docs[:32] + tests[:32]
+    selected.extend(islice(runtime_paths, MAX_ARCHIVE_FILES - len(selected)))
+    selected.extend(islice(iter(docs[32:] + tests[32:]), MAX_ARCHIVE_FILES - len(selected)))
+    return sorted(selected, key=file_priority)
+
+
+def round_robin(groups):
+    for row in zip_longest(*groups):
+        yield from (item for item in row if item is not None)
+
+
 def archive_documents(repo):
     owner, name = (quote(part, safe="") for part in repo["full_name"].split("/"))
     commit = quote(repo["ref"], safe="")
@@ -219,7 +246,7 @@ def archive_documents(repo):
                     and eligible_repository_file(path)):
                 files[path] = member
         result = []
-        for path in sorted(files, key=file_priority)[:MAX_ARCHIVE_FILES]:
+        for path in select_archive_paths(files):
             with archive.extractfile(files[path]) as handle:
                 try:
                     source = handle.read().decode("utf-8")
@@ -288,8 +315,7 @@ def github_discussions(graphql, repo):
             yield Evidence("discussion comment", item["title"], comment["url"], comment["body"])
 
 
-def collect_repository(get, get_files, graphql, repo):
-    base = f"/repos/{repo['full_name']}"
+def collect_source_documents(get_files, repo):
     if repo.get("readable_ref"):
         source_repo = {**repo, "ref": repo["readable_ref"]}
         documents = []
@@ -301,6 +327,20 @@ def collect_repository(get, get_files, graphql, repo):
             except (OSError, EOFError, tarfile.TarError, ValueError):
                 logger.info("Repository archive unavailable; using the bounded blob index.")
         yield from documents or repository_documents(get_files, source_repo)
+
+
+def repository_source_windows(documents, *, baseline=False):
+    groups = []
+    for item in documents:
+        if item.kind == "code":
+            groups.append(swe_qa_windows(item) if baseline else sliding_code_windows(item))
+        else:
+            groups.append(chunks_for_document(item, limit=3))
+    return list(islice(round_robin(groups), MAX_SOURCE_CHUNKS))
+
+
+def collect_repository(get, graphql, repo):
+    base = f"/repos/{repo['full_name']}"
     records = list(github_page(get, f"{base}/issues", 3, state="all", sort="updated", direction="desc"))
     for item in records:
         yield record_evidence(item)
@@ -327,29 +367,14 @@ def synchronize_repository(request_github, token, repo, claim):
     repo_id = index_key(repo)
     use_baseline = not repo["private"] and baseline_enabled()
     try:
-        all_chunks = []
-
         def graphql(query, variables):
             return request_github("/graphql", token, json_payload={"query": query, "variables": variables})
 
         files_token = None if repo.get("public_files") else token
-        for evidence in collect_repository(
-            lambda path: request_github(path, token),
-            lambda path: request_github(path, files_token),
-            graphql,
-            repo,
-        ):
-            if evidence.kind in {"code", "doc"}:
-                remaining = MAX_SOURCE_CHUNKS - len(all_chunks)
-                if remaining <= 0:
-                    continue
-                if evidence.kind == "code":
-                    windows = swe_qa_windows(evidence) if use_baseline else sliding_code_windows(evidence)
-                else:
-                    windows = chunks_for_document(evidence, limit=3)
-                all_chunks.extend(chunk for _, chunk in zip(range(remaining), windows))
-            else:
-                all_chunks.extend(chunks_for_document(evidence, limit=3))
+        documents = collect_source_documents(lambda path: request_github(path, files_token), repo)
+        all_chunks = repository_source_windows(documents, baseline=use_baseline)
+        for evidence in collect_repository(lambda path: request_github(path, token), graphql, repo):
+            all_chunks.extend(chunks_for_document(evidence, limit=3))
             if len(all_chunks) >= MAX_CHUNKS:
                 all_chunks = all_chunks[:MAX_CHUNKS]
                 break

@@ -179,9 +179,20 @@ official judge and its reference file for rubric results. The runner uses
 ReszVault's source-file selection and a file-and-line prompt formatter.
 Results can differ from the paper even with matching providers.
 
-During the credential-free audit, the runner evaluated 96 pinned questions
-from Flask and Requests. The archive-based keyword pipeline retrieved at
-least one labelled file on 37 of 42 Flask questions and 37 of 38 Requests
-questions with identifiable file labels. The 500-line keyword run found
-36 of 42 Flask questions and 36 of 38 Requests questions. These are
-retrieval checks, not the judge's answer scores.
+During the credential-free audit, the runner evaluated 192 pinned questions.
+File Hit@10 counts questions with at least one reference path among the
+retrieved files. Only questions with identifiable file labels are scored.
+
+| Dataset | Bounded production keyword retrieval | Full 500-line keyword retrieval |
+| --- | ---: | ---: |
+| Flask | 37/42 (88.1%) | 36/42 (85.7%) |
+| Requests | 37/38 (97.4%) | 36/38 (94.7%) |
+| pytest | 22/42 (52.4%) | 29/42 (69.0%) |
+| Django | 9/44 (20.5%) | 26/44 (59.1%) |
+
+The first pytest run found zero labelled files because the archive budget
+favored docs. The archive selector now reserves up to 32 slots each for docs
+and tests and distributes the runtime-code slots across packages. Indexing
+also takes windows across files before taking more windows from long files.
+The Django result shows that the bounded snapshot still omits useful source
+on larger projects. These are retrieval checks, not the judge's answer scores.
