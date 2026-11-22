@@ -5,6 +5,7 @@ import gzip
 import io
 import json
 import logging
+import os
 import re
 import tarfile
 import time
@@ -21,6 +22,10 @@ from rank_bm25 import BM25Okapi
 
 from rag import embed_texts, tokenize_text
 from storage import db, env_bool
+from swe_qa_baseline import (
+    DEFAULT_EMBEDDING_MODEL, WINDOW_LINES, WINDOW_OVERLAP, baseline_enabled,
+    dense_top_k, voyage_embeddings,
+)
 
 logger = logging.getLogger(__name__)
 INDEX_TTL = 6 * 60 * 60
@@ -55,7 +60,10 @@ class Evidence:
 
 def index_key(repo):
     visibility = "private" if repo["private"] else "public"
-    return f"{repo['id']}:{visibility}"
+    key = f"{repo['id']}:{visibility}"
+    if not repo["private"] and baseline_enabled():
+        key += f":swe-qa:{os.getenv('VOYAGE_MODEL', DEFAULT_EMBEDDING_MODEL)}"
+    return key
 
 
 def index_status(repo_id):
@@ -78,8 +86,10 @@ def index_status(repo_id):
 
 def mark_stale(repo_id):
     with db() as conn:
-        conn.execute("UPDATE repository_indexes SET stale = stale + 1 WHERE repo_id IN (?, ?)",
-                     (f"{repo_id}:public", f"{repo_id}:private"))
+        conn.execute(
+            "UPDATE repository_indexes SET stale = stale + 1 WHERE repo_id IN (?, ?) OR repo_id LIKE ?",
+            (f"{repo_id}:public", f"{repo_id}:private", f"{repo_id}:public:swe-qa:%"),
+        )
 
 
 def claim_sync(repo_id, force=False):
@@ -119,6 +129,12 @@ def sliding_code_windows(evidence, *, lines_per_window=CODE_WINDOW_LINES,
             break
         # Keep moving even if unusually long lines make the window shorter than the overlap.
         start = end - min(overlap, (end - start) // 3)
+
+
+def swe_qa_windows(evidence):
+    return sliding_code_windows(
+        evidence, lines_per_window=WINDOW_LINES, overlap=WINDOW_OVERLAP, char_budget=None,
+    )
 
 
 def chunks_for_document(evidence, limit=5):
@@ -309,8 +325,10 @@ def collect_repository(get, get_files, graphql, repo):
 def synchronize_repository(request_github, token, repo, claim):
     lease, revision = claim
     repo_id = index_key(repo)
+    use_baseline = not repo["private"] and baseline_enabled()
     try:
         all_chunks = []
+
         def graphql(query, variables):
             return request_github("/graphql", token, json_payload={"query": query, "variables": variables})
 
@@ -325,7 +343,10 @@ def synchronize_repository(request_github, token, repo, claim):
                 remaining = MAX_SOURCE_CHUNKS - len(all_chunks)
                 if remaining <= 0:
                     continue
-                windows = sliding_code_windows(evidence) if evidence.kind == "code" else chunks_for_document(evidence, limit=3)
+                if evidence.kind == "code":
+                    windows = swe_qa_windows(evidence) if use_baseline else sliding_code_windows(evidence)
+                else:
+                    windows = chunks_for_document(evidence, limit=3)
                 all_chunks.extend(chunk for _, chunk in zip(range(remaining), windows))
             else:
                 all_chunks.extend(chunks_for_document(evidence, limit=3))
@@ -333,7 +354,10 @@ def synchronize_repository(request_github, token, repo, claim):
                 all_chunks = all_chunks[:MAX_CHUNKS]
                 break
         vectors = None
-        if all_chunks and env_bool("REPOSITORY_LOCAL_EMBEDDINGS"):
+        code = [item.text for item in all_chunks if item.kind == "code"] if use_baseline else []
+        if code:
+            vectors = voyage_embeddings(code, "document")
+        elif not use_baseline and all_chunks and env_bool("REPOSITORY_LOCAL_EMBEDDINGS"):
             try:
                 vectors = embed_texts([f"{item.title}\n{item.text}" for item in all_chunks])
             except Exception:
@@ -469,9 +493,19 @@ def readme_excerpt(evidence):
 def retrieve(repo_id, question, live, include_files=True):
     indexed, embeddings = load_snapshot(repo_id)
     vectors = None
-    if embeddings and indexed and env_bool("REPOSITORY_LOCAL_EMBEDDINGS"):
+    if embeddings and indexed and ":swe-qa:" not in repo_id and env_bool("REPOSITORY_LOCAL_EMBEDDINGS"):
         vectors = np.frombuffer(embeddings, dtype=np.float32).reshape((len(indexed), -1))
     return rank_evidence(question, indexed, live, include_files=include_files, vectors=vectors)
+
+
+def retrieve_swe_qa(repo_id, question):
+    indexed, embeddings = load_snapshot(repo_id)
+    code = [item for item in indexed if item.kind == "code"]
+    if not code or not embeddings:
+        return []
+    vectors = np.frombuffer(embeddings, dtype=np.float32).reshape((len(code), -1))
+    query = voyage_embeddings([question], "query")[0]
+    return dense_top_k(code, vectors, query)
 
 
 def rank_evidence(question, indexed, live=(), *, include_files=True, vectors=None, top_k=RETRIEVAL_TOP_K):

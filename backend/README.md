@@ -154,3 +154,34 @@ with matching dataset, model and judging settings.
 
 - [SWE-QA benchmark and judge](https://github.com/peng-weihan/SWE-QA-Bench)
 - [Paper and published results](https://aclanthology.org/2026.findings-acl.402.pdf)
+
+### SWE-QA dense mode
+
+Set `REPOSITORY_RAG_MODE=swe-qa`, `VOYAGE_API_KEY`, and
+`SWE_QA_ANSWER_API_KEY` in the backend environment to enable this mode for
+public-repository code questions. The defaults are `voyage-code-3` and
+`gpt-5.1`. `VOYAGE_MODEL`, `SWE_QA_ANSWER_MODEL`, and
+`SWE_QA_ANSWER_URL` can be set explicitly for a particular run.
+
+This mode uses 500-line code windows with 100-line overlap and embeds source
+windows as documents and questions as queries. It ranks the top ten windows
+by exact inner product, equivalent to flat inner-product search. The
+paper's larger FAISS indexes can use approximate search. ReszVault uses a
+separate snapshot for this mode and embedding model. The live index still
+uses ReszVault's public archive limits. The frontend's citation format,
+repository access checks, summary route, and explicit PR/issue lookup remain
+part of ReszVault. Private repositories use the existing local path.
+
+To export answers using the SWE-QA-style dense backend, pass
+`--window paper --scope full --top-k 10 --voyage --paper-answer`
+and `--candidates /path/to/answers.jsonl` to the local runner. Use the
+official judge and its reference file for rubric results. The runner uses
+ReszVault's source-file selection and a file-and-line prompt formatter.
+Results can differ from the paper even with matching providers.
+
+During the credential-free audit, the runner evaluated 96 pinned questions
+from Flask and Requests. The archive-based keyword pipeline retrieved at
+least one labelled file on 37 of 42 Flask questions and 37 of 38 Requests
+questions with identifiable file labels. The 500-line keyword run found
+36 of 42 Flask questions and 36 of 38 Requests questions. These are
+retrieval checks, not the judge's answer scores.

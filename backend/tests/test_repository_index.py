@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 import github_research
 import repository_index as index
 import storage
+import swe_qa_baseline as baseline
 
 
 class RepositoryIndexTest(unittest.TestCase):
@@ -26,6 +27,13 @@ class RepositoryIndexTest(unittest.TestCase):
             patcher.start()
             self.addCleanup(patcher.stop)
         storage.init_db()
+        with storage.db() as conn:
+            conn.execute("INSERT INTO users VALUES (?, ?, ?, ?, ?, ?)",
+                         ("user", "Contributor", "user@example.com", None, None, storage.utc_now()))
+            conn.execute("INSERT INTO sessions VALUES (?, ?, ?, ?)",
+                         ("session", "user", "2099-01-01", storage.utc_now()))
+            conn.execute("INSERT INTO github_sessions VALUES (?, ?)", ("session", "token"))
+
 
     def fixture(self, path, token=None, **kwargs):
         base = "/repos/acme/tools"
@@ -85,12 +93,6 @@ class RepositoryIndexTest(unittest.TestCase):
         app = FastAPI()
         github_research.register_github_routes(app, None)
         client = TestClient(app)
-        with storage.db() as conn:
-            conn.execute("INSERT INTO users VALUES (?, ?, ?, ?, ?, ?)",
-                         ("user", "Contributor", "user@example.com", None, None, storage.utc_now()))
-            conn.execute("INSERT INTO sessions VALUES (?, ?, ?, ?)",
-                         ("session", "user", "2099-01-01", storage.utc_now()))
-            conn.execute("INSERT INTO github_sessions VALUES (?, ?)", ("session", "token"))
 
         repo = {"id": 91, "full_name": "acme/tools", "html_url": "https://github.com/acme/tools",
                 "default_branch": "main", "size": 10, "private": True,
@@ -127,6 +129,56 @@ class RepositoryIndexTest(unittest.TestCase):
                 self.assertIn(expected, result["answer"])
                 self.assertNotIn("I found these excerpts", result["answer"])
             model.assert_not_called()
+
+    def test_swe_qa_mode_runs_public_code_pipeline(self):
+        app = FastAPI()
+        github_research.register_github_routes(app, None)
+        client = TestClient(app)
+        repo = {"id": 91, "full_name": "acme/tools", "html_url": "https://github.com/acme/tools",
+                "default_branch": "main", "size": 10, "private": False, "archive_url": "configured"}
+        contents = "\n".join(["pass"] * 649 + ["def retry_delivery():"])
+        document = index.Evidence("code", "delivery.py", f"{repo['html_url']}/blob/ref/delivery.py", contents)
+
+        def provider(path, token=None, **kwargs):
+            if path == "/repos/acme/tools":
+                return dict(repo)
+            if path == "/repos/acme/tools/commits/main":
+                return {"sha": "ref"}
+            return self.fixture(path, token, **kwargs)
+
+        provider_calls = []
+        def model_request(url, key, payload):
+            provider_calls.append(payload)
+            if url.endswith("/embeddings"):
+                data = payload["input"]
+                return {"data": [{"index": i, "embedding": [0, 1] if "retry" in text else [1, 0]}
+                                 for i, text in reversed(list(enumerate(data)))]}
+            self.assertEqual(payload["model"], "gpt-5.1")
+            prompt = payload["messages"][1]["content"]
+            self.assertIn("[1] File: delivery.py, lines 401–650", prompt)
+            self.assertIn("def retry_delivery():", prompt)
+            return {"choices": [{"message": {"content": "Retry handling is in retry_delivery [1]."}}]}
+
+        headers = {"x-session-token": "session"}
+        with (
+            patch.dict(os.environ, {"REPOSITORY_RAG_MODE": "swe-qa",
+                                    "VOYAGE_API_KEY": "test", "SWE_QA_ANSWER_API_KEY": "test",
+                                    "SWE_QA_ANSWER_MODEL": "gpt-5.1"}),
+            patch.object(github_research, "github_request", provider),
+            patch.object(index, "archive_documents", return_value=[document]),
+            patch.object(baseline, "provider_json", side_effect=model_request),
+        ):
+            self.assertEqual(client.post("/api/github/repositories/acme/tools/index", headers=headers)
+                             .json()["state"], "syncing")
+            result = client.post("/api/github/chat", headers=headers, json={
+                "repository": "acme/tools", "question": "How does retry work?",
+            })
+            self.assertEqual(result.status_code, 200)
+            self.assertEqual(result.json()["answer"], "Retry handling is in retry_delivery [1].")
+            self.assertTrue(result.json()["sources"][0]["url"].endswith("#L401-L650"))
+            self.assertEqual([p.get("input_type") for p in provider_calls], ["document", "query", None])
+            self.assertIn(":swe-qa:", index.index_key(repo))
+            self.assertEqual(index.index_key({**repo, "private": True}), "91:private")
 
     def test_signed_webhook_invalidates_index(self):
         key = "91:public"

@@ -18,9 +18,10 @@ from pydantic import BaseModel, Field
 from rag import groq_complete
 from repository_index import (
     claim_sync, index_key, index_status, inventory, live_evidence, load_snapshot, mark_stale,
-    readme_excerpt, repository_intent, retrieve, synchronize_repository,
+    readme_excerpt, references, repository_intent, retrieve, retrieve_swe_qa, synchronize_repository,
 )
 from storage import db, utc_now
+from swe_qa_baseline import baseline_answer, baseline_enabled, require_providers
 
 REPO_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_.-]+")
 
@@ -68,11 +69,11 @@ def github_request(path, token=None, payload=None, *, json_payload=None):
     return data
 
 
-def evidence_payload(evidence):
+def evidence_payload(evidence, *, full_windows=False):
     remaining = 24_000
     sources = []
     for index, item in enumerate(evidence, 1):
-        excerpt = item.text[:min(4000, remaining)]
+        excerpt = item.text if full_windows else item.text[:min(4000, remaining)]
         if not excerpt:
             break
         sources.append({"id": index, "title": item.title, "url": item.url, "kind": item.kind,
@@ -207,6 +208,11 @@ def register_github_routes(app: FastAPI, create_session):
         return {"installationUrl": f"https://github.com/apps/{slug}/installations/new"}
 
     def start_sync(tasks, token, repo, force=False):
+        if baseline_enabled() and not repo["private"]:
+            try:
+                require_providers(answer=True)
+            except RuntimeError as error:
+                raise HTTPException(503, str(error)) from error
         claim = claim_sync(index_key(repo), force)
         if claim:
             tasks.add_task(synchronize_repository, github_request, token, repo, claim)
@@ -281,16 +287,31 @@ def register_github_routes(app: FastAPI, create_session):
         intent = repository_intent(question)
         if intent:
             return answer_repository_question(repo, intent, status)
-        live = list(live_evidence(lambda path: github_request(path, token), repo, question))
-        evidence = retrieve(index_key(repo), question, live, include_files=bool(repo["readable_ref"]))
+        use_baseline = (
+            baseline_enabled() and not repo["private"] and bool(repo["readable_ref"])
+            and not references(question)
+        )
+        if use_baseline:
+            try:
+                evidence = retrieve_swe_qa(index_key(repo), question)
+            except (OSError, ValueError, KeyError, RuntimeError) as error:
+                raise HTTPException(502, "SWE-QA embedding provider is unavailable.") from error
+        else:
+            live = list(live_evidence(lambda path: github_request(path, token), repo, question))
+            evidence = retrieve(index_key(repo), question, live, include_files=bool(repo["readable_ref"]))
         if not evidence:
             message = "I could not find evidence for that question in this repository."
             if status["state"] == "syncing":
                 message += " The repository is still indexing. Try again when the index is ready."
             return {"answer": message, "sources": []}
-        sources = evidence_payload(evidence)
+        sources = evidence_payload(evidence, full_windows=use_baseline)
         answer = None
-        if not repo["private"]:
+        if use_baseline:
+            try:
+                answer = baseline_answer(question, sources, citations=True)
+            except (OSError, ValueError, KeyError, RuntimeError) as error:
+                raise HTTPException(502, "SWE-QA answer provider is unavailable.") from error
+        elif not repo["private"]:
             answer = groq_complete(repository_answer_prompt(repo["full_name"], question, sources))
         if not answer:
             answer = "I found these excerpts from the repository:\n\n" + "\n\n".join(
