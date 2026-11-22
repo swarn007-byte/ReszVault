@@ -32,7 +32,7 @@ export function RepositoryPicker({ onSelect }: { onSelect: (repository: string) 
   return (
     <div className="mx-auto max-w-lg px-6 py-12">
       <h1 className="text-2xl font-semibold">Start a repository chat</h1>
-      <p className="mt-2 text-sm">Choose a GitHub repository to research its pull requests and issues.</p>
+      <p className="mt-2 text-sm">Choose a GitHub repository to search its code, docs, pull requests, and issues.</p>
       <div className="my-4 flex flex-wrap gap-4 text-sm underline">
         <button type="button" className="underline"
           onClick={() => void startGitHubSignIn().catch((failure: Error) => setError(failure.message))}>

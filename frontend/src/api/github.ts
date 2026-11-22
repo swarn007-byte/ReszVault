@@ -26,9 +26,9 @@ export async function authorizeRepository(repository: string) {
 export async function askGitHub(repository: string, question: string) {
   const { data } = await githubApi.post<{
     answer: string;
-    sources: { number: number; title: string; url: string }[];
+    sources: { id: number; title: string; url: string; kind: string }[];
   }>("/api/github/chat", { repository, question });
-  const links = data.sources.map(({ number, url }) => `[#${number}](${url})`).join(" · ");
+  const links = data.sources.map(({ id, url, kind }) => `[${id} · ${kind}](${url})`).join(" · ");
   return links ? `${data.answer}\n\nSources: ${links}` : data.answer;
 }
 
@@ -37,4 +37,19 @@ export function githubError(error: unknown) {
     return error.response.data.detail;
   }
   return error instanceof Error ? error.message : "GitHub request failed. Try again.";
+}
+
+export type RepositoryIndex = {
+  state: "missing" | "syncing" | "ready" | "stale" | "failed";
+  sourceCount: number;
+  syncedAt: number | null;
+};
+
+export async function loadRepositoryIndex(repository: string, action: "status" | "start" | "refresh") {
+  const path = repository.split("/").map(encodeURIComponent).join("/");
+  const url = `/api/github/repositories/${path}/index`;
+  const { data } = action === "status"
+    ? await githubApi.get<RepositoryIndex>(url)
+    : await githubApi.post<RepositoryIndex>(url, undefined, { params: { force: action === "refresh" } });
+  return data;
 }

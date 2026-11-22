@@ -78,3 +78,33 @@ repositories and then choose one when starting a chat. Public repository
 records can be summarized with the configured Groq model. Private repository
 chats show matching GitHub records and links without sending their content to
 Groq.
+
+## Repository RAG
+
+Opening a repository chat starts an index build in the background. The index
+includes up to 300 recently updated issues and pull requests, recent issue and
+review comments, reviews and available patches from up to eight PRs, and up to
+16 docs and 16 source files from the default branch. The GitHub App needs
+**Contents** read access for private source files. When GitHub Discussions is
+enabled and accessible to the app, discussion threads and comments are indexed
+as well. Questions naming a PR or issue also fetch that item directly, and
+topic questions can retrieve older issues and PRs through GitHub search.
+
+Every lookup checks GitHub access and is scoped to the selected repository.
+Public repository answers use `GROQ_API_KEY` when configured. Private repository
+content stays on the backend and is returned as cited excerpts. Keyword
+retrieval runs by default. Set `REPOSITORY_LOCAL_EMBEDDINGS=true` on a service
+with enough memory for the local sentence-transformer to add semantic search.
+
+Use **Sync repository** to refresh immediately. Indexes also refresh on use
+after six hours. For faster invalidation, configure a GitHub App webhook at
+`https://reszvault.vercel.app/api/github/webhook` using the same secret as
+`GITHUB_WEBHOOK_SECRET` on the backend. Subscribe to Push, Issues, Issue
+comment, Pull request, Pull request review, Pull request review comment, and,
+if enabled, Discussion and Discussion comment. Signed events mark an index
+stale, and the next access rebuilds it using the user's GitHub authorization.
+
+SQLite keeps the index between requests. The current free Render filesystem
+can be reset by restarts or deploys. Mount a persistent disk and set
+`RESZVAULT_DATA_DIR` to its mount path for indexes that survive redeploys.
+Set this variable in the service environment before process startup.

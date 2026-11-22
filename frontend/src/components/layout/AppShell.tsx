@@ -5,6 +5,7 @@ import { Sidebar } from "../Sidebar/Sidebar";
 import { useChatStore } from "../../store/chatStore";
 import { EmptyState } from "../EmptyState/EmptyState";
 import { ChatWindow } from "../ChatWindow/ChatWindow";
+import { RepositoryIndexStatus } from "../RepositoryIndexStatus";
 import { RepositoryPicker } from "../RepositoryPicker";
 import { askGitHub, githubError } from "../../api/github";
 import { streamQuestion } from "../../api/chat";
@@ -358,6 +359,7 @@ export function AppShell({ userId }: { userId?: string }) {
             </p>
           </div>
           <div className="ml-auto flex items-center gap-2">
+            {repository ? <RepositoryIndexStatus key={repository} repository={repository} /> : (
             <button
               type="button"
               onClick={handleConnectVault}
@@ -370,6 +372,7 @@ export function AppShell({ userId }: { userId?: string }) {
               </svg>
               <span>{connectState === "done" ? "Exported" : "Connect"}</span>
             </button>
+            )}
           </div>
         </header>
 
@@ -378,7 +381,7 @@ export function AppShell({ userId }: { userId?: string }) {
             <RepositoryPicker onSelect={startRepositoryChat} />
           ) : repository && activeChat ? (
             <ChatWindow chat={activeChat} onSend={handleSend} isSending={isSending}
-              disabled={isSending} placeholder="Ask about a pull request or issue…" />
+              disabled={isSending} placeholder="Ask about code, docs, pull requests, or issues…" />
           ) : showEmpty && !isSending ? (
             <EmptyState
               onSend={handleSend}

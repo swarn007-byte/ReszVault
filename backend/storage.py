@@ -10,7 +10,7 @@ from typing import Any, Iterator
 
 
 BASE_DIR = Path(__file__).resolve().parent
-DATA_DIR = BASE_DIR / "data"
+DATA_DIR = Path(os.environ["RESZVAULT_DATA_DIR"]) if os.getenv("RESZVAULT_DATA_DIR") else BASE_DIR / "data"
 UPLOAD_DIR = DATA_DIR / "uploads"
 DB_PATH = DATA_DIR / "reszvault.sqlite3"
 
@@ -75,6 +75,18 @@ def init_db() -> None:
               user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
               access_token TEXT NOT NULL,
               expires_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS repository_indexes (
+              repo_id TEXT PRIMARY KEY,
+              chunks TEXT,
+              vectors BLOB,
+              chunk_count INTEGER NOT NULL DEFAULT 0,
+              synced_at INTEGER,
+              stale INTEGER NOT NULL DEFAULT 0,
+              lease TEXT,
+              lease_until INTEGER NOT NULL DEFAULT 0,
+              error INTEGER NOT NULL DEFAULT 0
             );
 
             CREATE TABLE IF NOT EXISTS books (
