@@ -3101,11 +3101,10 @@ textarea {
 }
 
 .copy-hero h1 span {
-    background: linear-gradient(135deg, #262932 18%, #d86f1c 74%, #ff9d45 100%);
-    background-clip: text;
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    color: #d86f1c;
+    background: none;
+    -webkit-background-clip: border-box;
+    -webkit-text-fill-color: #1f222a;
+    color: #1f222a;
 }
 
 .copy-hero-stats {
@@ -3595,4 +3594,14 @@ textarea {
         width: 100%;
         border-radius: 0;
     }
+}
+
+/* Keep icon and label on one line in nav and hero buttons */
+.copy-nav-btn,
+.copy-btn-primary,
+.copy-btn-secondary {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
 }
