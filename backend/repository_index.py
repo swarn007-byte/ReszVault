@@ -1,14 +1,18 @@
 """Repository ingestion, snapshot storage, and evidence retrieval."""
 
 import base64
+import gzip
+import io
 import json
 import logging
 import re
+import tarfile
 import time
 from collections import Counter
 from dataclasses import asdict, dataclass, replace
 from pathlib import PurePosixPath
 from urllib.parse import quote, urlencode
+from urllib.request import Request, urlopen
 from uuid import uuid4
 
 import numpy as np
@@ -22,6 +26,12 @@ logger = logging.getLogger(__name__)
 INDEX_TTL = 6 * 60 * 60
 JOB_LEASE = 10 * 60
 MAX_CHUNKS = 1100
+RETRIEVAL_TOP_K = 10
+CODE_WINDOW_LINES = 120
+CODE_WINDOW_OVERLAP = 24
+MAX_SOURCE_CHUNKS = 650
+MAX_ARCHIVE_FILES = 250
+MAX_FILE_BYTES = 48_000
 FILE_SUFFIXES = {
     ".md", ".rst", ".adoc", ".txt", ".py", ".go", ".rs", ".js", ".ts", ".tsx", ".jsx",
     ".java", ".kt", ".rb", ".c", ".h", ".cpp", ".cs", ".swift", ".vue", ".svelte",
@@ -87,16 +97,38 @@ def claim_sync(repo_id, force=False):
     return (lease, row["stale"]) if row else None
 
 
+def sliding_code_windows(evidence, *, lines_per_window=CODE_WINDOW_LINES,
+                         overlap=CODE_WINDOW_OVERLAP, char_budget=4000):
+    lines = evidence.text.splitlines()
+    start = 0
+    while start < len(lines):
+        end = min(start + lines_per_window, len(lines))
+        if char_budget:
+            used = len(lines[start])
+            end = start + 1
+            while (end < min(start + lines_per_window, len(lines))
+                   and used + len(lines[end]) + 1 <= char_budget):
+                used += len(lines[end]) + 1
+                end += 1
+        text = "\n".join(lines[start:end]).strip()
+        if char_budget:
+            text = text[:char_budget]
+        if text:
+            yield replace(evidence, text=text, url=f"{evidence.url}#L{start + 1}-L{end}")
+        if end == len(lines):
+            break
+        # Keep moving even if unusually long lines make the window shorter than the overlap.
+        start = end - min(overlap, (end - start) // 3)
+
+
 def chunks_for_document(evidence, limit=5):
     lines = evidence.text.splitlines()
-    if not lines:
-        return
     for start in range(0, min(len(lines), 60 * limit), 60):
         text = "\n".join(lines[start:start + 65]).strip()[:2400]
         if not text:
             continue
         url = evidence.url
-        if evidence.kind in {"doc", "code"}:
+        if evidence.kind == "doc":
             url += f"#L{start + 1}-L{min(start + 65, len(lines))}"
         yield replace(evidence, text=text, url=url)
 
@@ -140,19 +172,56 @@ def file_priority(path):
     return (2, path.count("/"), path)
 
 
+def eligible_repository_file(path):
+    file = PurePosixPath(path)
+    return (
+        not any(part.startswith(".") or part in EXCLUDED_DIRS for part in path.split("/"))
+        and (file.suffix.lower() in FILE_SUFFIXES or file.name.lower() in {"readme", "contributing", "license"})
+    )
+
+
+def archive_documents(repo):
+    owner, name = (quote(part, safe="") for part in repo["full_name"].split("/"))
+    commit = quote(repo["ref"], safe="")
+    request = Request(f"https://codeload.github.com/{owner}/{name}/tar.gz/{commit}",
+                      headers={"User-Agent": "ReszVault"})
+    compressed_limit = 12_000_000
+    expanded_limit = 48_000_000
+    with urlopen(request, timeout=15) as response:
+        compressed = response.read(compressed_limit + 1)
+    if len(compressed) > compressed_limit:
+        raise ValueError("Repository archive exceeds download budget.")
+    with gzip.GzipFile(fileobj=io.BytesIO(compressed)) as archive:
+        content = archive.read(expanded_limit + 1)
+    if len(content) > expanded_limit:
+        raise ValueError("Repository archive exceeds expansion budget.")
+    with tarfile.open(fileobj=io.BytesIO(content), mode="r:") as archive:
+        files = {}
+        for member in archive:
+            _, _, path = member.name.partition("/")
+            if (member.isfile() and 0 < member.size <= MAX_FILE_BYTES and path
+                    and eligible_repository_file(path)):
+                files[path] = member
+        result = []
+        for path in sorted(files, key=file_priority)[:MAX_ARCHIVE_FILES]:
+            with archive.extractfile(files[path]) as handle:
+                try:
+                    source = handle.read().decode("utf-8")
+                except UnicodeDecodeError:
+                    continue
+            kind = "doc" if file_priority(path)[0] < 2 else "code"
+            result.append(Evidence(kind, path, f"{repo['html_url']}/blob/{commit}/{quote(path)}", source))
+        return result
+
+
 def repository_documents(get, repo):
     base = f"/repos/{repo['full_name']}"
     commit = quote(repo["ref"], safe="")
     tree = get(f"{base}/git/trees/{commit}?recursive=1")
     files = [
         item for item in tree.get("tree", [])
-        if item["type"] == "blob" and 0 < item.get("size", 0) <= 48_000
-        and item.get("mode") != "120000"
-        and not any(part.startswith(".") or part in EXCLUDED_DIRS for part in item["path"].split("/"))
-        and (
-            PurePosixPath(item["path"]).suffix.lower() in FILE_SUFFIXES
-            or PurePosixPath(item["path"]).name.lower() in {"readme", "contributing", "license"}
-        )
+        if item["type"] == "blob" and 0 < item.get("size", 0) <= MAX_FILE_BYTES
+        and item.get("mode") != "120000" and eligible_repository_file(item["path"])
     ]
     paths = sorted(files, key=lambda item: file_priority(item["path"]))
     # Reserve room for both documentation and code in repos with many docs.
@@ -206,7 +275,16 @@ def github_discussions(graphql, repo):
 def collect_repository(get, get_files, graphql, repo):
     base = f"/repos/{repo['full_name']}"
     if repo.get("readable_ref"):
-        yield from repository_documents(get_files, {**repo, "ref": repo["readable_ref"]})
+        source_repo = {**repo, "ref": repo["readable_ref"]}
+        documents = []
+        # Public archives cover more paths with one request. Private data still
+        # comes from the existing authenticated GitHub API.
+        if not repo["private"] and repo.get("archive_url"):
+            try:
+                documents = archive_documents(source_repo)
+            except (OSError, EOFError, tarfile.TarError, ValueError):
+                logger.info("Repository archive unavailable; using the bounded blob index.")
+        yield from documents or repository_documents(get_files, source_repo)
     records = list(github_page(get, f"{base}/issues", 3, state="all", sort="updated", direction="desc"))
     for item in records:
         yield record_evidence(item)
@@ -243,7 +321,14 @@ def synchronize_repository(request_github, token, repo, claim):
             graphql,
             repo,
         ):
-            all_chunks.extend(chunks_for_document(evidence, limit=3))
+            if evidence.kind in {"code", "doc"}:
+                remaining = MAX_SOURCE_CHUNKS - len(all_chunks)
+                if remaining <= 0:
+                    continue
+                windows = sliding_code_windows(evidence) if evidence.kind == "code" else chunks_for_document(evidence, limit=3)
+                all_chunks.extend(chunk for _, chunk in zip(range(remaining), windows))
+            else:
+                all_chunks.extend(chunks_for_document(evidence, limit=3))
             if len(all_chunks) >= MAX_CHUNKS:
                 all_chunks = all_chunks[:MAX_CHUNKS]
                 break
@@ -383,7 +468,14 @@ def readme_excerpt(evidence):
 
 def retrieve(repo_id, question, live, include_files=True):
     indexed, embeddings = load_snapshot(repo_id)
-    candidates = live + indexed
+    vectors = None
+    if embeddings and indexed and env_bool("REPOSITORY_LOCAL_EMBEDDINGS"):
+        vectors = np.frombuffer(embeddings, dtype=np.float32).reshape((len(indexed), -1))
+    return rank_evidence(question, indexed, live, include_files=include_files, vectors=vectors)
+
+
+def rank_evidence(question, indexed, live=(), *, include_files=True, vectors=None, top_k=RETRIEVAL_TOP_K):
+    candidates = [*live, *indexed]
     if not candidates:
         return []
     query = terms(question)
@@ -391,9 +483,8 @@ def retrieve(repo_id, question, live, include_files=True):
     tokens = [terms(f"{item.kind} {item.title} {item.title} {item.text}") for item in candidates]
     keyword = BM25Okapi(tokens).get_scores(query) if any(tokens) and query else np.zeros(len(candidates))
     semantic = np.zeros(len(candidates))
-    if embeddings and indexed and query and env_bool("REPOSITORY_LOCAL_EMBEDDINGS"):
+    if vectors is not None and indexed and query:
         try:
-            vectors = np.frombuffer(embeddings, dtype=np.float32).reshape((len(indexed), -1))
             semantic[len(live):] = np.maximum(0, vectors @ embed_texts([question])[0] - 0.20)
         except Exception:
             logger.warning("Repository vector search unavailable; using keywords.")
@@ -420,6 +511,6 @@ def retrieve(repo_id, question, live, include_files=True):
         seen.add(item.url)
         by_document[document] += 1
         result.append(item)
-        if len(result) == 7:
+        if len(result) == top_k:
             break
     return result

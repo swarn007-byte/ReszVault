@@ -84,7 +84,9 @@ Groq.
 Opening a repository chat starts an index build in the background. The index
 includes up to 300 recently updated issues and pull requests, recent issue and
 review comments, reviews and available patches from up to eight PRs, and up to
-16 docs and 16 source files from the default branch. The GitHub App needs
+250 eligible files from a bounded public archive at the default-branch commit.
+Private repositories and public archive fallbacks use up to 16 docs and 16
+source files. The GitHub App needs
 **Contents** read access for private source files. When GitHub Discussions is
 enabled and accessible to the app, discussion threads and comments are indexed
 as well. Questions naming a PR or issue also fetch that item directly, and
@@ -108,3 +110,47 @@ SQLite keeps the index between requests. The current free Render filesystem
 can be reset by restarts or deploys. Mount a persistent disk and set
 `RESZVAULT_DATA_DIR` to its mount path for indexes that survive redeploys.
 Set this variable in the service environment before process startup.
+
+### SWE-QA evaluation
+
+The local runner uses the production ranker and reports file Hit@K, Recall@K,
+and MRR@K. It infers reference files from explicit paths in the benchmark's
+answers. Questions without matching paths are counted separately. File hits
+measure whether ranking finds a referenced file, without grading the generated
+answer or verifying the cited lines.
+
+Use the pinned source commit from the upstream SWE-QA `repo_commit.txt`.
+For a comparison on Flask, use `Benchmark/flask.jsonl` from SWE-QA release
+revision `c13deac7a0d99b0ca2e593e004c4739475785b08` and Flask revision
+`85c5d93cbd049c4bd0679c36fd1ddcae8c37b642`.
+
+```sh
+PYTHONPATH=backend python backend/eval/swe_qa.py \
+  --dataset /path/to/Benchmark/flask.jsonl \
+  --repo /path/to/flask \
+  --revision 85c5d93cbd049c4bd0679c36fd1ddcae8c37b642 \
+  --window production --scope archive --top-k 10
+```
+
+Use `--window legacy --scope production` for the previous bounded chunking
+and `--window paper --scope full` for 500-line windows with 100-line overlap.
+The latter uses ReszVault's ranker, while the published baseline uses
+Voyage embeddings and FAISS. `--embeddings` enables the local embedding model
+for an additional experimental comparison.
+
+On the 48 pinned Flask questions, 42 had explicit matching file labels.
+With K fixed at 10, legacy coverage and windows hit 13 of 42 questions
+(31.0%, recall 16.5%). The archive coverage and current production windows
+hit 37 of 42 (88.1%, recall 67.1%). These runs measure source-file retrieval
+without live GitHub search or answer generation.
+
+For end-to-end scoring, set `GROQ_API_KEY` and use
+`--candidates /path/to/flask_answers.jsonl` to export generated answers.
+The reference answer is never included in the model prompt. Feed the export
+and reference JSONL to upstream's `Benchmark construction/score/llm-as-a-judge.py`
+using `EVAL_CANDIDATE_PATH` and `EVAL_REFERENCE_PATH` and configure the judge's
+model and credentials as described in that script. Compare rubric scores only
+with matching dataset, model and judging settings.
+
+- [SWE-QA benchmark and judge](https://github.com/peng-weihan/SWE-QA-Bench)
+- [Paper and published results](https://aclanthology.org/2026.findings-acl.402.pdf)

@@ -48,6 +48,15 @@ class RepositoryIndexTest(unittest.TestCase):
             return [{"filename": "backend.py", "patch": "- import redis\n+ import sqlite3"}]
         raise AssertionError(path)
 
+    def test_sliding_windows_keep_later_code_searchable(self):
+        code = "\n".join([f"line {i}" for i in range(245)] + ["def rebuild_manifest():"])
+        item = index.Evidence("code", "manifest.py", "https://github.com/acme/tools/blob/ref/manifest.py", code)
+        chunks = list(index.sliding_code_windows(item))
+        self.assertTrue(chunks[1].url.endswith("#L97-L216"))
+        result = index.rank_evidence("Where is rebuild_manifest implemented?", chunks)
+        self.assertIn("def rebuild_manifest", result[0].text)
+        self.assertTrue(result[0].url.endswith("-L246"))
+
     def test_snapshot_retrieval_and_sync_lease(self):
         repo = {"id": 91, "full_name": "acme/tools", "html_url": "https://github.com/acme/tools",
                 "size": 10, "default_branch": "main", "readable_ref": "fixture-ref", "private": False}
