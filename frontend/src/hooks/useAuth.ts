@@ -1,7 +1,7 @@
 import { useNavigate } from "react-router-dom";
 import { authClient, signOut, useSession } from "../lib/auth-client";
 
-/** Backend cookie and header sessions share the same auth state. */
+/** Single source of truth for auth state + actions (Better Auth). */
 export function useAuth() {
   const navigate = useNavigate();
   const { data, isPending, error, refetch } = useSession();

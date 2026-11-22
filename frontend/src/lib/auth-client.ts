@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { getApiBase } from "./api-base";
 
 type AuthUser = {
@@ -18,7 +18,7 @@ type SessionData = {
 };
 
 type AuthResult = {
-  data?: { user?: AuthUser; session?: { token?: string } };
+  data?: unknown;
   error?: { message?: string } | null;
 };
 
@@ -38,42 +38,21 @@ export function setSessionToken(token: string) {
   }
 }
 
-async function authFetch(
-  path: string,
-  init?: RequestInit,
-): Promise<AuthResult> {
+async function authFetch(path: string, init?: RequestInit): Promise<AuthResult> {
   const response = await fetch(`${getApiBase()}${path}`, {
     ...init,
     credentials: "include",
-    signal: AbortSignal.timeout(20_000),
     headers: {
       "Content-Type": "application/json",
-      "x-session-token": getSessionToken(),
       ...(init?.headers ?? {}),
     },
   });
-  if (!response.headers.get("content-type")?.includes("application/json")) {
-    return { error: { message: "The sign-in service is unavailable. Please try again in a moment." } };
-  }
   const body = (await response.json().catch(() => ({}))) as AuthResult & {
     detail?: string;
     data?: { session?: { token?: string } };
   };
   if (!response.ok) {
-    return {
-      error: {
-        message:
-          body.detail ??
-          body.error?.message ??
-          `Request failed (${response.status})`,
-      },
-    };
-  }
-  if (path.includes("/sign-in/email") || path.includes("/sign-up/email")) {
-    if (body.error) return body;
-    if (!body.data?.user?.id || !body.data?.session?.token) {
-      return { error: { message: "Sign-in could not be completed. Please try again." } };
-    }
+    return { error: { message: body.detail ?? body.error?.message ?? `Request failed (${response.status})` } };
   }
   // Store session token from response for Vercel proxy compatibility
   if (body.data?.session?.token) {
@@ -85,12 +64,11 @@ async function authFetch(
 async function loadSession(): Promise<SessionData> {
   const response = await fetch(`${getApiBase()}/api/auth/session`, {
     credentials: "include",
-    signal: AbortSignal.timeout(12_000),
     headers: {
       "x-session-token": getSessionToken(),
     },
   });
-  if (!response.ok || !response.headers.get("content-type")?.includes("application/json")) throw new Error("The sign-in service is unavailable. Please try again.");
+  if (!response.ok) return { user: null, session: null };
   return (await response.json()) as SessionData;
 }
 
@@ -98,54 +76,42 @@ export function useSession() {
   const [data, setData] = useState<SessionData | null>(null);
   const [isPending, setIsPending] = useState(true);
   const [error, setError] = useState<Error | null>(null);
-  const revision = useRef(0);
 
   const refetch = useCallback(async () => {
-    const request = ++revision.current;
     setIsPending(true);
     try {
       const session = await loadSession();
-      if (request === revision.current) {
-        setData(session);
-        setError(null);
-      }
+      setData(session);
+      setError(null);
       return session;
     } catch (err) {
-      const nextError =
-        err instanceof Error ? err : new Error("Could not load session");
-      if (request === revision.current) {
-        setError(nextError);
-        setData({ user: null, session: null });
-      }
+      const nextError = err instanceof Error ? err : new Error("Could not load session");
+      setError(nextError);
+      setData({ user: null, session: null });
       return { user: null, session: null };
     } finally {
-      if (request === revision.current) setIsPending(false);
+      setIsPending(false);
     }
   }, []);
 
   useEffect(() => {
     let alive = true;
-    const sessionRevision = revision;
-    const request = ++sessionRevision.current;
     loadSession()
       .then((session) => {
-        if (!alive || request !== revision.current) return;
+        if (!alive) return;
         setData(session);
         setError(null);
       })
       .catch((err: unknown) => {
-        if (!alive || request !== revision.current) return;
-        setError(
-          err instanceof Error ? err : new Error("Could not load session"),
-        );
+        if (!alive) return;
+        setError(err instanceof Error ? err : new Error("Could not load session"));
         setData({ user: null, session: null });
       })
       .finally(() => {
-        if (alive && request === revision.current) setIsPending(false);
+        if (alive) setIsPending(false);
       });
     return () => {
       alive = false;
-      sessionRevision.current++;
     };
   }, []);
 
@@ -161,35 +127,23 @@ export const authClient = {
       }),
   },
   signIn: {
-    email: async (payload: {
-      email: string;
-      password: string;
-      rememberMe?: boolean;
-    }) =>
+    email: async (payload: { email: string; password: string; rememberMe?: boolean }) =>
       authFetch("/api/auth/sign-in/email", {
         method: "POST",
         body: JSON.stringify(payload),
       }),
-    social: async (payload: {
-      provider: "google";
-      callbackURL: string;
-    }): Promise<AuthResult> => {
+    social: async (payload: { provider: "google"; callbackURL: string }): Promise<AuthResult> => {
       const callback = new URL(payload.callbackURL).pathname || "/projects";
       window.location.href = `${getApiBase()}/api/auth/google/start?callbackURL=${encodeURIComponent(callback)}`;
       return { error: null };
     },
   },
   signOut: async () => {
-    const result = await authFetch("/api/auth/sign-out", {
+    setSessionToken("");
+    return authFetch("/api/auth/sign-out", {
       method: "POST",
       body: JSON.stringify({}),
     });
-    if (result.error)
-      throw new Error(
-        result.error.message ?? "Could not sign out. Please try again.",
-      );
-    setSessionToken("");
-    return result;
   },
 };
 

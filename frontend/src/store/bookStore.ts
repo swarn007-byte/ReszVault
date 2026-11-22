@@ -43,14 +43,17 @@ export const useBookStore = create<BookState>()(
       projectBooks: (projectId) => {
         const { books, projectBookIds } = get();
         if (!projectId) return books;
-        const ids = projectBookIds[projectId] ?? [];
+        const ids = projectBookIds[projectId];
+        const hasAnyProjectMap = Object.values(projectBookIds).some((bookIds) => bookIds.length > 0);
+        if (!ids && !hasAnyProjectMap) return books;
+        if (!ids) return [];
         const idSet = new Set(ids);
         return books.filter((book) => idSet.has(book.id));
       },
 
       selectedBookIds: (projectId) => {
         const { selected } = get();
-        if (selected.kind === "user") return get().projectBooks(projectId).filter((book) => book.id === selected.id && book.status === "ready").map((book) => book.id);
+        if (selected.kind === "user") return [selected.id];
         return get()
           .projectBooks(projectId)
           .filter((book) => book.status === "ready")
@@ -66,18 +69,21 @@ export const useBookStore = create<BookState>()(
         return books.find((b) => b.id === selected.id)?.title ?? "My book";
       },
 
-      fetchBooks: async () => {
+      fetchBooks: async (projectId) => {
         set({ loading: true, error: null });
         try {
           const books = await listBooks();
           const { selected, projectBookIds } = get();
-          // Older installations had no project mapping. Adopt those sources into
-          // the original vault, never whichever project happens to be open.
-          const assigned = new Set(Object.values(projectBookIds).flat());
-          const unassigned = books.filter((book) => !assigned.has(book.id)).map((book) => book.id);
-          const nextProjectBookIds = unassigned.length
-            ? { ...projectBookIds, "default-research-vault": [...(projectBookIds["default-research-vault"] ?? []), ...unassigned] }
-            : projectBookIds;
+          const liveIds = new Set(books.map((book) => book.id));
+          const currentProjectIds = projectId ? projectBookIds[projectId] : undefined;
+          const currentProjectHasLiveBooks = Boolean(
+            currentProjectIds?.some((bookId) => liveIds.has(bookId)),
+          );
+          const hasAnyProjectMap = Object.values(projectBookIds).some((bookIds) => bookIds.length > 0);
+          const nextProjectBookIds =
+            projectId && books.length > 0 && (!hasAnyProjectMap || (currentProjectIds && !currentProjectHasLiveBooks))
+              ? { ...projectBookIds, [projectId]: books.map((book) => book.id) }
+              : projectBookIds;
           if (selected.kind === "user" && !books.some((b) => b.id === selected.id)) {
             set({ books, projectBookIds: nextProjectBookIds, selected: { kind: "default" } });
           } else {
@@ -175,7 +181,7 @@ export const useBookStore = create<BookState>()(
         }
       },
 
-      removeBook: async (id) => {
+      removeBook: async (id, projectId) => {
         await deleteBook(id);
         const { selected } = get();
         set((state) => ({
@@ -183,7 +189,7 @@ export const useBookStore = create<BookState>()(
           projectBookIds: Object.fromEntries(
             Object.entries(state.projectBookIds).map(([key, ids]) => [
               key,
-              ids.filter((bookId) => bookId !== id),
+              key === projectId || !projectId ? ids.filter((bookId) => bookId !== id) : ids,
             ]),
           ),
           selected: selected.kind === "user" && selected.id === id ? { kind: "default" } : selected,

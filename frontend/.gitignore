@@ -26,7 +26,3 @@ dist-ssr
 *.sln
 *.sw?
 .vercel
-
-# Browser test artifacts
-playwright-report/
-test-results/

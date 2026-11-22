@@ -1,18 +1,15 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import { useProjectStore } from "./projectStore";
 
 export type Message = {
   id: string;
   role: "user" | "assistant";
   content: string;
   createdAt: string;
-  sourcesUsed?: number;
 };
 
 export type Chat = {
   id: string;
-  projectId: string;
   title: string;
   messages: Message[];
   updatedAt: string;
@@ -29,12 +26,11 @@ type ChatState = {
   setHistoryLoading: (loading: boolean) => void;
   setIsSending: (sending: boolean) => void;
   setActiveChat: (id: string | null) => void;
-  createChat: (projectId?: string) => string;
+  createChat: () => string;
   deleteChat: (id: string) => void;
   addMessage: (chatId: string, message: Omit<Message, "id" | "createdAt">) => string;
   appendToMessage: (chatId: string, messageId: string, delta: string) => void;
   setMessageContent: (chatId: string, messageId: string, content: string) => void;
-  setMessageSources: (chatId: string, messageId: string, sourcesUsed: number) => void;
   getChat: (id: string) => Chat | undefined;
 };
 
@@ -47,18 +43,23 @@ function generateTitle(text: string): string {
   return trimmed.length > 32 ? `${trimmed.slice(0, 32)}…` : trimmed;
 }
 
+function isBrokenIndexMessage(message: Message) {
+  return /vault index is not reachable|check the database connection/i.test(message.content);
+}
+
 function cleanPersistedChats(chats: Chat[] = []) {
   return chats
+    .filter((chat) => !chat.messages.some(isBrokenIndexMessage))
     .map((chat) => {
-      const messages = chat.messages;
+      const messages = chat.messages.filter((message) => !isBrokenIndexMessage(message));
       const firstUser = messages.find((message) => message.role === "user");
       return {
         ...chat,
-        projectId: chat.projectId ?? "default-research-vault",
         title: firstUser ? generateTitle(firstUser.content) : chat.title,
         messages,
       };
-    });
+    })
+    .filter((chat) => chat.messages.length > 0);
 }
 
 export const useChatStore = create<ChatState>()(
@@ -75,12 +76,11 @@ export const useChatStore = create<ChatState>()(
       setIsSending: (sending) => set({ isSending: sending }),
       setActiveChat: (id) => set({ activeChatId: id }),
 
-      createChat: (projectId) => {
+      createChat: () => {
         const id = crypto.randomUUID();
         const now = new Date().toISOString();
         const chat: Chat = {
           id,
-          projectId: projectId ?? useProjectStore.getState().activeProjectId ?? "default-research-vault",
           title: "New chat",
           messages: [],
           updatedAt: now,
@@ -152,17 +152,10 @@ export const useChatStore = create<ChatState>()(
         })),
 
       getChat: (id) => get().chats.find((c) => c.id === id),
-
-      setMessageSources: (chatId, messageId, sourcesUsed) => set((state) => ({
-        chats: state.chats.map((chat) => chat.id !== chatId ? chat : {
-          ...chat,
-          messages: chat.messages.map((message) => message.id === messageId ? { ...message, sourcesUsed } : message),
-        }),
-      })),
     }),
     {
       name: "reszvault-chats",
-      version: 3,
+      version: 2,
       migrate: (persisted) => {
         const state = persisted as Partial<ChatState> | undefined;
         if (!state) return persisted;
