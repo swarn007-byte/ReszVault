@@ -473,6 +473,19 @@ def load_snapshot(repo_id):
 
 def repository_intent(question):
     text = " ".join(tokenize_text(question))
+    if re.fullmatch(r"(?:hi|hey|hello)(?: there| reszvault)?", text):
+        return "greeting"
+    text = re.sub(r"^(?:(?:hi|hey|hello|please|can you|could you|would you) )+", "", text)
+    if re.fullmatch(r"(?:tell me|explain|describe)(?: about)? (?:this |the )?(?:repo(?:sitory)?|project|codebase)(?: please)?", text):
+        return "overview"
+    if re.fullmatch(
+        r"(?:(?:what (?:are )?|which |list (?:me )?|show (?:me )?)?(?:the )?(?:top level |root )?"
+        r"(?:folders|directories)(?: (?:in|of) (?:this |the )?(?:repo(?:sitory)?|project|codebase))?"
+        r"|(?:what|which) (?:folders|directories) (?:are there in |does )(?:this |the )?"
+        r"(?:repo(?:sitory)?|project|codebase)(?: have)?)",
+        text,
+    ):
+        return "folders"
     if re.fullmatch(r"(?:please )?(?:summari[sz]e|summary|overview)(?: (?:this |the )?(?:repo(?:sitory)?|project|codebase|it))?(?: please)?", text):
         return "overview"
     if re.fullmatch(r"(?:give me )?(?:a |an )?(?:summary|overview)(?: of (?:this |the )?(?:repo(?:sitory)?|project|codebase))?", text):

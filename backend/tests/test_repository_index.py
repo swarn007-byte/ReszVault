@@ -125,6 +125,8 @@ class RepositoryIndexTest(unittest.TestCase):
                 return dict(repo)
             if path == "/repos/acme/tools/commits/main":
                 return {"sha": "fixture-ref"}
+            if path == "/repos/acme/tools/git/trees/fixture-ref":
+                return {"tree": [{"path": "internal", "type": "tree"}, {"path": "README.md", "type": "blob"}]}
             if path.startswith(("/search/issues?", "/repos/acme/tools/pulls?")):
                 return {"items": []} if path.startswith("/search") else []
             return self.fixture(path, token, **kwargs)
@@ -143,6 +145,8 @@ class RepositoryIndexTest(unittest.TestCase):
             self.assertIn("README.md", {source["title"] for source in response.json()["sources"]})
             for question, expected in (
                 ("summarise", "A tool for managing SQLite databases"),
+                ("hey tell me about the repo", "A tool for managing SQLite databases"),
+                ("hi", "Hi! I can help you explore"),
                 ("what are things u have access to", "Documentation: 1"),
                 ("What can you access?", "Documentation: 1"),
             ):
@@ -151,6 +155,12 @@ class RepositoryIndexTest(unittest.TestCase):
                 }).json()
                 self.assertIn(expected, result["answer"])
                 self.assertNotIn("I found these excerpts", result["answer"])
+            folders = client.post("/api/github/chat", headers=headers, json={
+                "repository": "acme/tools", "question": "what are folders in this repo",
+            }).json()
+            self.assertIn("**internal/**", folders["answer"])
+            self.assertNotIn("README", folders["answer"])
+            self.assertTrue(folders["sources"][0]["url"].endswith("/tree/fixture-ref"))
             follow_up = client.post("/api/github/chat", headers=headers, json={
                 "repository": "acme/tools", "question": "Where is that implemented?",
                 "previous_questions": ["How do I initialize the SQLite database?", "What can you access?"],

@@ -365,6 +365,24 @@ def register_github_routes(app: FastAPI, create_session):
             answer += "\n\nThe last sync failed. Use **Sync repository** to retry."
         return {"answer": answer, "sources": sources}
 
+    def list_repository_folders(repo, token):
+        ref = repo["readable_ref"]
+        if not ref:
+            return {"answer": "I couldn’t read the default branch to list its folders.", "sources": []}
+        commit = quote(ref, safe="")
+        files_token = None if repo.get("public_files") else token
+        tree = github_request(f"/repos/{repo['full_name']}/git/trees/{commit}", files_token)
+        folders = sorted(item["path"] for item in tree["tree"] if item["type"] == "tree")
+        if folders:
+            listing = "\n".join(f"- **{markdown_text(folder)}/**" for folder in folders[:40])
+            answer = f"Top-level folders in **{repo['full_name']}**:\n\n{listing}"
+            if len(folders) > 40 or tree.get("truncated"):
+                answer += "\n\nOpen the repository tree below for the full list."
+        else:
+            answer = "GitHub returned no top-level folders on the default branch."
+        source = {"id": 1, "title": "Repository tree", "url": f"{repo['html_url']}/tree/{commit}", "kind": "tree"}
+        return {"answer": answer, "sources": [source]}
+
     @app.post("/api/github/chat")
     def repository_chat(request: IncomingRequest, payload: RepositoryQuestion, tasks: BackgroundTasks):
         token = github_token(request)
@@ -372,9 +390,14 @@ def register_github_routes(app: FastAPI, create_session):
         question = payload.question.strip()
         if not question:
             raise HTTPException(422, "Enter a question about the repository.")
+        intent = repository_intent(question)
+        if intent == "greeting":
+            return {"answer": f"Hi! I can help you explore **{repo['full_name']}**. Ask what the repo does, "
+                              "what folders it contains, or where a feature is implemented.", "sources": []}
+        if intent == "folders":
+            return list_repository_folders(repo, token)
         start_sync(tasks, token, repo)
         status = index_status(index_key(repo))
-        intent = repository_intent(question)
         if intent:
             return answer_repository_question(repo, intent, status)
         pr_overview = PR_OVERVIEW.fullmatch(question)
