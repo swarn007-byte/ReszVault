@@ -2,15 +2,16 @@ import { defineConfig } from "@playwright/test";
 import { fileURLToPath } from "node:url";
 
 const frontendUrl = "http://127.0.0.1:5185";
+const deployedUrl = process.env.PLAYWRIGHT_BASE_URL;
 const backendUrl = "http://127.0.0.1:8011";
 
 export default defineConfig({
   testDir: "./e2e",
   use: {
-    baseURL: frontendUrl,
+    baseURL: deployedUrl ?? frontendUrl,
     launchOptions: { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE },
   },
-  webServer: [
+  webServer: deployedUrl ? undefined : [
     {
       command: "python backend/manage.py runserver 127.0.0.1:8011 --noreload",
       cwd: fileURLToPath(new URL("..", import.meta.url)),

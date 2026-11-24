@@ -4,16 +4,43 @@ ReszVault is a research workspace for asking questions about PDFs and GitHub rep
 
 ## Run locally
 
-Use Python 3.11+, Node.js 22.12+, and Docker Compose. From the repository root, run:
+With Docker Compose v2.24+, start React, Django, PostgreSQL, and pgAdmin from the repository root.
 
 ```bash
-cp backend/.env.example backend/.env
-docker compose --env-file backend/.env -f backend/compose.yaml up -d --wait
+docker compose up --build
+```
+
+Django applies migrations at startup. The comparison demo works with the default settings.
+
+| Service | Local address |
+| --- | --- |
+| React workspace | [http://localhost:5175](http://localhost:5175) |
+| Django API health | [http://127.0.0.1:8000/health](http://127.0.0.1:8000/health) |
+| Django admin | [http://127.0.0.1:8000/admin/](http://127.0.0.1:8000/admin/) |
+| pgAdmin | [http://127.0.0.1:5050](http://127.0.0.1:5050) |
+
+Create a Django admin account after the app starts.
+
+```bash
+docker compose exec backend python manage.py createsuperuser
+```
+
+In pgAdmin, sign in with `demo@example.com` and `reszvault-demo`. Open the registered **ReszVault** server and use `reszvault-demo` as the default PostgreSQL password. pgAdmin reaches PostgreSQL at `db:5432` inside Compose.
+
+`docker compose down` stops the stack and keeps the database volume, including uploaded PDFs and indexed chunks. Compose retains the prior project name so databases created with the previous `backend/compose.yaml` command can be reused. If you ran that command with a custom project name, use the same `-p` value here. If the earlier `django_demo` project is holding the ports, stop it with `docker compose -p django_demo down` first.
+
+For Groq or OAuth, copy `backend/.env.example` to `backend/.env` and set the provider credentials. If you customize the local PostgreSQL settings, pass `--env-file backend/.env` to Compose when starting either setup. Update the registered pgAdmin server if you change its PostgreSQL username.
+
+### Local development with hot reload
+
+You need Python 3.11+ and Node.js 22.12+. Start only the database tools in Docker, then run Django and Vite on your machine.
+
+```bash
+docker compose up -d --wait db pgadmin
 python -m venv .venv
 source .venv/bin/activate
 python -m pip install -r backend/requirements.txt
 python backend/manage.py migrate
-python backend/manage.py createsuperuser
 python backend/manage.py runserver 127.0.0.1:8000
 ```
 
@@ -26,17 +53,6 @@ cd frontend
 npm ci
 npm run dev
 ```
-
-| Service | Local address |
-| --- | --- |
-| React workspace | [http://localhost:5175](http://localhost:5175) |
-| Django API health | [http://127.0.0.1:8000/health](http://127.0.0.1:8000/health) |
-| Django admin | [http://127.0.0.1:8000/admin/](http://127.0.0.1:8000/admin/) |
-| pgAdmin | [http://127.0.0.1:5050](http://127.0.0.1:5050) |
-
-Sign in to Django admin with the superuser created during setup. In pgAdmin, use `demo@example.com` and `reszvault-demo`. Open the registered **ReszVault** server and use `reszvault-demo` as the default PostgreSQL password. The local PostgreSQL port is `55432`; pgAdmin reaches it at `db:5432` inside Compose.
-
-If the old demo Compose project is still running, free the ports with `docker compose -p django_demo -f backend/compose.yaml down` before starting the new one.
 
 ## Walk through PDF Q&A
 
@@ -71,7 +87,16 @@ npx playwright install chromium
 npm run test:e2e
 ```
 
-Playwright starts separate Django and Vite processes. The backend suite covers PDF ownership, upload and deletion, stream messages, policy comparison, authentication, GitHub indexing, and import compatibility.
+Playwright starts separate Django and Vite processes by default. To test a running Docker stack from the host, use:
+
+```bash
+cd frontend
+npm ci
+npx playwright install chromium
+PLAYWRIGHT_BASE_URL=http://localhost:5175 npm run test:e2e
+```
+
+The backend suite covers PDF ownership, upload and deletion, stream messages, policy comparison, authentication, GitHub indexing, and import compatibility.
 
 ## MCP search
 

@@ -1,0 +1,82 @@
+# Keep the project name used by the previous backend/compose.yaml entry point.
+name: backend
+
+services:
+  frontend:
+    build: ./frontend
+    ports:
+      - "127.0.0.1:${RESZVAULT_WEB_PORT:-5175}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-Y", "off", "-q", "-O", "/dev/null", "http://127.0.0.1/health"]
+      interval: 5s
+      timeout: 4s
+      retries: 6
+  backend:
+    build: ./backend
+    env_file:
+      - path: ./backend/.env
+        required: false
+    environment:
+      DJANGO_DEBUG: "1"
+      DATABASE_URL: ""
+      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:${RESZVAULT_WEB_PORT:-5175}}
+      RESZVAULT_DB_HOST: db
+      RESZVAULT_DB_PORT: "5432"
+      RESZVAULT_DB_NAME: ${RESZVAULT_DB_NAME:-reszvault}
+      RESZVAULT_DB_USER: ${RESZVAULT_DB_USER:-reszvault}
+      RESZVAULT_DB_PASSWORD: ${RESZVAULT_DB_PASSWORD:-reszvault-demo}
+    ports:
+      - "127.0.0.1:${RESZVAULT_API_PORT:-8000}:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    command:
+      - sh
+      - -c
+      - >-
+        python manage.py migrate --noinput &&
+        python manage.py collectstatic --noinput &&
+        exec gunicorn config.wsgi:application --bind 0.0.0.0:8000
+        --worker-class gthread --threads 4 --timeout 120
+    healthcheck:
+      test: ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/health', timeout=3).close()"]
+      interval: 5s
+      timeout: 4s
+      start_period: 15s
+      retries: 12
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${RESZVAULT_DB_NAME:-reszvault}
+      POSTGRES_USER: ${RESZVAULT_DB_USER:-reszvault}
+      POSTGRES_PASSWORD: ${RESZVAULT_DB_PASSWORD:-reszvault-demo}
+    ports:
+      - "127.0.0.1:${RESZVAULT_DB_PORT:-55432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+  pgadmin:
+    image: dpage/pgadmin4:9.14
+    environment:
+      PGADMIN_DEFAULT_EMAIL: demo@example.com
+      PGADMIN_CONFIG_ALLOW_SPECIAL_EMAIL_DOMAINS: "['example.com']"
+      PGADMIN_DEFAULT_PASSWORD: reszvault-demo
+    ports:
+      - "127.0.0.1:${RESZVAULT_PGADMIN_PORT:-5050}:80"
+    volumes:
+      - ./backend/pgadmin-servers.json:/pgadmin4/servers.json:ro
+      - pgadmin_data:/var/lib/pgadmin
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  pgadmin_data:
