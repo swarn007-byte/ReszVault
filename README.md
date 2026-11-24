@@ -9,6 +9,8 @@ Live:
 - Frontend: [https://reszvault.vercel.app](https://reszvault.vercel.app)
 - Backend: [https://reszvault.onrender.com](https://reszvault.onrender.com)
 
+**[Run the local Django demo](#local-django-demo)** to try vault-scoped PDF search with React, Django REST Framework, PostgreSQL, pgAdmin, Playwright, and an optional MCP tool.
+
 ## Why ReszVault
 
 Most PDF chat tools break once research gets messy:
@@ -88,7 +90,16 @@ The demo is for local use with sample data. The deployed app runs on the FastAPI
 
 ### Start the demo
 
-You need Python 3.11+, Node.js 22.12+ or 24+, and Docker Compose. From the repo root, run:
+You need Python 3.11+, Node.js 22.12+, and Docker Compose. To get the demo branch, run the following commands.
+
+```bash
+git clone --branch jd-demo https://github.com/swarn007-byte/ReszVault.git
+cd ReszVault
+```
+
+If you already cloned ReszVault, run `git fetch origin` and `git switch jd-demo`.
+
+From the repo root, start the database, apply migrations and load the sample PDFs.
 
 ```bash
 docker compose -f django_demo/compose.yaml up -d --wait
@@ -111,11 +122,39 @@ npm ci
 npm run dev -- --host 127.0.0.1 --port 5175 --strictPort
 ```
 
-Open [the demo on port 5175](http://127.0.0.1:5175/django-demo). Select **Returns** and ask **What is the return window?**. The answer should include **30 days from delivery** and cite page 1 of the return policy. Select **Shipping** and ask the same question to see the no-match response.
+### Demo walkthrough
+
+Open [the demo on port 5175](http://127.0.0.1:5175/django-demo). The sample vaults work without an LLM API key.
+
+| Vault | Question | Expected result |
+| --- | --- | --- |
+| Returns | What is the return window? | 30 days from delivery, with a citation to Return Policy, page 1 |
+| Shipping | What is the return window? | No matching passage in this vault |
+| Shipping | How long does standard shipping take? | Three business days, with a citation to Shipping Guide, page 1 |
+
+You can send the Returns question directly to the REST API.
+
+```bash
+curl -fsS http://127.0.0.1:8001/api/demo/vaults/returns/ask/ \
+  -H 'Content-Type: application/json' \
+  --data '{"question":"What is the return window?"}'
+```
+
+The response contains an `answer` and a `sources` array with each passage's title, page, and text.
 
 - **Django admin** is at [port 8001](http://127.0.0.1:8001/admin/). Sign in with the superuser you created to inspect vaults, sources, and chunks.
 - **pgAdmin** is at [port 5050](http://127.0.0.1:5050). Sign in with `demo@example.com` / `reszvault-demo`. Open the registered **ReszVault Demo** server and enter the PostgreSQL password `reszvault-demo`. Look under **Databases → reszvault → Schemas → public → Tables** for `vaults_source` and `vaults_chunk`. To register the server manually with the defaults, use host `db`, port `5432`, maintenance database `postgres`, and username `reszvault`.
 - **REST API** exposes `GET /api/demo/vaults/` and `POST /api/demo/vaults/<slug>/ask/` with a JSON body containing `question`.
+
+### Follow the request in code
+
+| Step | File |
+| --- | --- |
+| React sends the question for the selected vault | [DjangoDemo.tsx](frontend/src/pages/DjangoDemo.tsx) |
+| Django REST Framework validates the question and loads the vault | [views.py](django_demo/vaults/views.py) |
+| Django ORM loads the vault's chunks and the retrieval code ranks them | [models.py](django_demo/vaults/models.py) and [retrieval.py](django_demo/vaults/retrieval.py) |
+| MCP exposes the same retrieval as a read-only tool | [vault_mcp.py](django_demo/vaults/management/commands/vault_mcp.py) |
+| Playwright checks answers, citations, and vault isolation | [vault-search.spec.ts](frontend/e2e/vault-search.spec.ts) |
 
 ### Run browser tests
 
@@ -140,7 +179,7 @@ python -m pip install -r django_demo/requirements-mcp.txt
 
 Configure your MCP client for stdio. Use the absolute path to the demo environment's Python executable as the command, with the absolute path to `django_demo/manage.py` and `vault_mcp` as arguments. The `search_vault_sources` tool takes `vault_slug` and `question` and returns matching passages with page numbers.
 
-## Local Development
+## FastAPI Local Development
 
 ### 1. Start the backend
 
