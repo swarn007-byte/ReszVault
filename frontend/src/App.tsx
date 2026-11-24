@@ -4,6 +4,7 @@ import { ChatPage } from "./pages/Chat";
 import { Settings } from "./pages/Settings";
 import { Home } from "./pages/Home";
 import { ProjectsPage } from "./pages/Projects";
+import { DjangoDemo } from "./pages/DjangoDemo";
 
 export default function App() {
   return (
@@ -17,6 +18,7 @@ export default function App() {
         <Route path="/app" element={<ChatPage />} />
         <Route path="/app/:id" element={<ChatPage />} />
         <Route path="/settings" element={<Settings />} />
+        {import.meta.env.DEV && <Route path="/django-demo" element={<DjangoDemo />} />}
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>

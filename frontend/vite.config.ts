@@ -14,6 +14,10 @@ export default defineConfig({
   },
   server: {
     proxy: {
+      "/api/demo/": {
+        target: process.env.RESZVAULT_DEMO_API_URL ?? "http://127.0.0.1:8001",
+        changeOrigin: false,
+      },
       "/auth/providers": {
         target: "http://localhost:3000",
         changeOrigin: false,
