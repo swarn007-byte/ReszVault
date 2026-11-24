@@ -62,7 +62,7 @@ export async function sendQuestion(
   const { data } = await api.post<ChatApiResponse>("/chat", {
     question,
     ...(bookId ? { bookId } : {}),
-    ...(bookIds?.length ? { bookIds } : {}),
+    ...(bookIds ? { bookIds } : {}),
   });
   return data;
 }
@@ -89,7 +89,7 @@ export async function streamQuestion(
       body: JSON.stringify({
         question,
         ...(bookId ? { bookId } : {}),
-        ...(bookIds?.length ? { bookIds } : {}),
+        ...(bookIds ? { bookIds } : {}),
       }),
       signal,
     });

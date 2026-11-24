@@ -12,15 +12,18 @@ export default defineConfig({
   },
   webServer: [
     {
-      command: "python django_demo/manage.py runserver 127.0.0.1:8011 --noreload",
+      command: "python backend/manage.py runserver 127.0.0.1:8011 --noreload",
       cwd: fileURLToPath(new URL("..", import.meta.url)),
-      url: `${backendUrl}/api/demo/vaults/`,
-      env: { RESZVAULT_DEMO_USE_GROQ: "0" },
+      url: `${backendUrl}/health`,
+      env: {
+        DATABASE_URL: "", DJANGO_DEBUG: "1", RESZVAULT_DB_HOST: "127.0.0.1",
+        RESZVAULT_LOCAL_EMBEDDINGS: "0", GROQ_API_KEY: "", FRONTEND_ORIGIN: frontendUrl,
+      },
     },
     {
       command: "npm run dev -- --host 127.0.0.1 --port 5185 --strictPort",
-      url: `${frontendUrl}/django-demo`,
-      env: { RESZVAULT_DEMO_API_URL: backendUrl },
+      url: frontendUrl,
+      env: { RESZVAULT_API_TARGET: backendUrl, VITE_API_BASE_URL: "" },
     },
   ],
 });

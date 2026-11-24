@@ -5,7 +5,7 @@ import re
 from pathlib import PurePosixPath
 from urllib.parse import quote, urlencode
 
-from fastapi import HTTPException
+from vaults.http import RequestError
 
 FILE_REQUEST = re.compile(
     r"^(?:(?:please\s+)?(?:give(?: me)?|show(?: me)?|open|read|display)(?:\s+the)?\s+)?"
@@ -39,7 +39,7 @@ def requested_file(question):
 def fetch_optional(get, path):
     try:
         return get(path)
-    except HTTPException as error:
+    except RequestError as error:
         if error.status_code != 404:
             raise
         return None

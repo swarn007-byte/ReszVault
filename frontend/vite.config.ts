@@ -3,6 +3,8 @@ import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { resolve } from "path";
 
+const apiTarget = process.env.RESZVAULT_API_TARGET ?? "http://127.0.0.1:8000";
+
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   build: {
@@ -13,39 +15,13 @@ export default defineConfig({
     },
   },
   server: {
-    proxy: {
-      "/api/demo/": {
-        target: process.env.RESZVAULT_DEMO_API_URL ?? "http://127.0.0.1:8001",
-        changeOrigin: false,
-      },
-      "/auth/providers": {
-        target: "http://localhost:3000",
-        changeOrigin: false,
-      },
-      "/api/github": {
-        target: "http://localhost:3000",
-        changeOrigin: false,
-      },
-      "/api/auth": {
-        target: "http://localhost:3000",
-        changeOrigin: false,
-      },
-      "^/books": {
-        target: "http://localhost:3000",
-        changeOrigin: false,
-      },
-      "^/chat": {
-        target: "http://localhost:3000",
-        changeOrigin: false,
-      },
-      "^/auth": {
-        target: "http://localhost:3000",
-        changeOrigin: false,
-      },
-      "/health": {
-        target: "http://localhost:3000",
-        changeOrigin: false,
-      },
-    },
+    port: 5175,
+    strictPort: true,
+    proxy: Object.fromEntries(
+      ["/api/auth", "/api/github", "/auth/providers", "^/books", "^/chat", "/health"].map((path) => [
+        path,
+        { target: apiTarget },
+      ]),
+    ),
   },
 });

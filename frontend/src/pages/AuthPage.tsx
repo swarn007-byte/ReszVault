@@ -1,17 +1,17 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Link, Navigate, useLocation, useNavigate, useSearchParams } from "react-router-dom";
-import { authClient, useSession, setSessionToken, startGitHubSignIn, finishGitHubSignIn } from "../lib/auth-client";
+import { authClient, useSession, startGitHubSignIn, finishSocialSignIn } from "../lib/auth-client";
 
 type Mode = "sign-in" | "sign-up";
 type ProviderConfig = { google: boolean; github: boolean };
 
 export function AuthPage() {
-  const { data, isPending, refetch } = useSession();
+  const { data, isPending } = useSession();
   const navigate = useNavigate();
   const { hash } = useLocation();
   const exchangeStarted = useRef(false);
-  const [searchParams, setSearchParams] = useSearchParams();
+  const [searchParams] = useSearchParams();
   const [mode, setMode] = useState<Mode>("sign-in");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -23,28 +23,22 @@ export function AuthPage() {
     github: false,
   });
 
-  const githubCode = new URLSearchParams(hash.slice(1)).get("github_code");
+  const codes = new URLSearchParams(hash.slice(1));
+  const githubCode = codes.get("github_code");
+  const googleCode = codes.get("google_code");
+  const signInCode = githubCode ?? googleCode;
+  const provider = githubCode ? "github" : "google";
   useEffect(() => {
-    if (!githubCode || exchangeStarted.current) return;
+    if (!signInCode || exchangeStarted.current) return;
     exchangeStarted.current = true;
     window.history.replaceState(window.history.state, "", window.location.pathname + window.location.search);
-    finishGitHubSignIn(githubCode)
-      .then(() => navigate("/app", { replace: true }))
+    finishSocialSignIn(provider, signInCode)
+      .then((destination) => navigate(destination, { replace: true }))
       .catch((failure: Error) => {
         navigate("/login", { replace: true });
         setError(failure.message);
       });
-  }, [githubCode, navigate]);
-
-  // Capture session_token from Google OAuth redirect (Vercel strips Set-Cookie)
-  useEffect(() => {
-    const token = searchParams.get("session_token");
-    if (token) {
-      setSessionToken(token);
-      setSearchParams({}, { replace: true });
-      void refetch();
-    }
-  }, [searchParams, setSearchParams, refetch]);
+  }, [signInCode, provider, navigate]);
 
   useEffect(() => {
     let alive = true;
@@ -61,8 +55,8 @@ export function AuthPage() {
     };
   }, []);
 
-  if (githubCode) return <main className="rv-auth-page" role="status">Completing GitHub sign-in…</main>;
-  if (!isPending && data?.user && !error && !searchParams.has("github_error")) return <Navigate to="/projects" replace />;
+  if (signInCode) return <main className="rv-auth-page" role="status">Completing sign-in…</main>;
+  if (!isPending && data?.user && !error && !searchParams.has("github_error") && !searchParams.has("google_error")) return <Navigate to="/projects" replace />;
 
   const isSignUp = mode === "sign-up";
 
@@ -175,6 +169,7 @@ export function AuthPage() {
             onClick={() => void startGitHubSignIn().catch((failure: Error) => setError(failure.message))}>
             Continue with GitHub
           </button>
+          {searchParams.has("google_error") && <p role="alert">Google sign-in could not be completed. Try again.</p>}
           {searchParams.has("github_error") && (
             <p className="rv-auth-error" role="alert">
               {searchParams.get("github_error") === "unavailable"

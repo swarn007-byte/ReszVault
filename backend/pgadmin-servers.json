@@ -1,7 +1,7 @@
 {
   "Servers": {
     "1": {
-      "Name": "ReszVault Demo",
+      "Name": "ReszVault",
       "Group": "Servers",
       "Host": "db",
       "Port": 5432,

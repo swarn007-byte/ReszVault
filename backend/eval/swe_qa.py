@@ -7,6 +7,11 @@ import re
 import subprocess
 from pathlib import Path
 
+import django
+
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
+django.setup()
+
 from github_research import evidence_payload, repository_answer_prompt
 from rag import embed_texts, groq_complete
 from swe_qa_baseline import baseline_answer, dense_top_k, require_providers, voyage_embeddings

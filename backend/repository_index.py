@@ -3,7 +3,6 @@
 import base64
 import gzip
 import io
-import json
 import logging
 import os
 import re
@@ -18,11 +17,13 @@ from urllib.request import Request, urlopen
 from uuid import uuid4
 
 import numpy as np
-from fastapi import HTTPException
+from django.db import transaction
+from django.db.models import F, Q
 from rank_bm25 import BM25Okapi
 
 from rag import embed_texts, tokenize_text
-from storage import db, env_bool
+from vaults.http import RequestError
+from vaults.models import RepositoryIndex
 from swe_qa_baseline import (
     DEFAULT_EMBEDDING_MODEL, WINDOW_LINES, WINDOW_OVERLAP, baseline_enabled,
     dense_top_k, voyage_embeddings,
@@ -69,11 +70,9 @@ def index_key(repo):
 
 
 def index_status(repo_id):
-    with db() as conn:
-        row = conn.execute(
-            "SELECT synced_at, lease_until, stale, error, chunk_count FROM repository_indexes WHERE repo_id = ?",
-            (repo_id,),
-        ).fetchone()
+    row = RepositoryIndex.objects.filter(pk=repo_id).values(
+        "synced_at", "lease_until", "stale", "error", "chunk_count"
+    ).first()
     if row is None:
         return {"state": "missing", "sourceCount": 0, "syncedAt": None}
     state = "syncing" if row["lease_until"] > time.time() else "ready"
@@ -87,26 +86,28 @@ def index_status(repo_id):
 
 
 def mark_stale(repo_id):
-    with db() as conn:
-        conn.execute(
-            "UPDATE repository_indexes SET stale = stale + 1 WHERE repo_id IN (?, ?) OR repo_id LIKE ?",
-            (f"{repo_id}:public", f"{repo_id}:private", f"{repo_id}:public:swe-qa:%"),
-        )
+    RepositoryIndex.objects.filter(
+        Q(pk__in=[f"{repo_id}:public", f"{repo_id}:private"])
+        | Q(pk__startswith=f"{repo_id}:public:swe-qa:")
+    ).update(stale=F("stale") + 1)
 
 
+@transaction.atomic
 def claim_sync(repo_id, force=False):
     now = int(time.time())
-    lease = uuid4().hex
-    with db() as conn:
-        conn.execute("INSERT INTO repository_indexes (repo_id) VALUES (?) ON CONFLICT DO NOTHING", (repo_id,))
-        row = conn.execute(
-            """UPDATE repository_indexes SET lease = ?, lease_until = ?, error = 0
-               WHERE repo_id = ? AND lease_until <= ?
-                 AND (? OR synced_at IS NULL OR stale > 0 OR synced_at < ?)
-               RETURNING stale""",
-            (lease, now + JOB_LEASE, repo_id, now, force, now - INDEX_TTL),
-        ).fetchone()
-    return (lease, row["stale"]) if row else None
+    RepositoryIndex.objects.get_or_create(pk=repo_id)
+    row = RepositoryIndex.objects.select_for_update().get(pk=repo_id)
+    if row.lease_until > now:
+        return None
+    fresh = row.synced_at and now - row.synced_at < INDEX_TTL and not row.stale and not row.error
+    if fresh and not force:
+        return None
+
+    row.lease = uuid4().hex
+    row.lease_until = now + JOB_LEASE
+    row.error = False
+    row.save(update_fields=["lease", "lease_until", "error"])
+    return row.lease, row.stale
 
 
 def sliding_code_windows(evidence, *, lines_per_window=CODE_WINDOW_LINES,
@@ -305,7 +306,7 @@ def github_discussions(graphql, repo):
     owner, name = repo["full_name"].split("/")
     try:
         result = graphql(DISCUSSIONS_QUERY, {"owner": owner, "name": name})
-    except HTTPException as error:
+    except RequestError as error:
         if error.status_code in {403, 404}:
             return
         raise
@@ -383,27 +384,26 @@ def synchronize_repository(request_github, token, repo, claim):
         code = [item.text for item in all_chunks if item.kind == "code"] if use_baseline else []
         if code:
             vectors = voyage_embeddings(code, "document")
-        elif not use_baseline and all_chunks and env_bool("REPOSITORY_LOCAL_EMBEDDINGS"):
+        elif not use_baseline and all_chunks and os.getenv("REPOSITORY_LOCAL_EMBEDDINGS", "").lower() in {"1", "true", "yes", "on"}:
             try:
                 vectors = embed_texts([f"{item.title}\n{item.text}" for item in all_chunks])
             except Exception:
                 logger.warning("Repository embeddings unavailable; retaining keyword retrieval.")
-        payload = json.dumps([asdict(item) for item in all_chunks], ensure_ascii=False)
-        with db() as conn:
-            conn.execute(
-                """UPDATE repository_indexes SET chunks = ?, vectors = ?, synced_at = ?, chunk_count = ?,
-                   stale = MAX(0, stale - ?), lease = NULL, lease_until = 0, error = 0
-                   WHERE repo_id = ? AND lease = ?""",
-                (payload, vectors.tobytes() if vectors is not None else None, int(time.time()),
-                 len(all_chunks), revision, repo_id, lease),
-            )
+        RepositoryIndex.objects.filter(pk=repo_id, lease=lease).update(
+            chunks=[asdict(item) for item in all_chunks],
+            vectors=vectors.tobytes() if vectors is not None else None,
+            synced_at=int(time.time()),
+            chunk_count=len(all_chunks),
+            stale=F("stale") - revision,
+            lease=None,
+            lease_until=0,
+            error=False,
+        )
     except Exception as error:
         logger.warning("Repository index sync failed for %s (%s)", repo_id, type(error).__name__)
-        with db() as conn:
-            conn.execute(
-                "UPDATE repository_indexes SET lease = NULL, lease_until = 0, error = 1 WHERE repo_id = ? AND lease = ?",
-                (repo_id, lease),
-            )
+        RepositoryIndex.objects.filter(pk=repo_id, lease=lease).update(
+            lease=None, lease_until=0, error=True
+        )
 
 
 def terms(text):
@@ -427,7 +427,7 @@ def live_evidence(get, repo, question):
         for number in numbers[:3]:
             try:
                 item = get(f"{base}/issues/{number}")
-            except HTTPException as error:
+            except RequestError as error:
                 if error.status_code == 404:
                     continue
                 raise
@@ -455,7 +455,7 @@ def live_evidence(get, repo, question):
     search = " ".join(query[:3]) + f" repo:{repo['full_name']}"
     try:
         response = get(f"/search/issues?{urlencode({'q': search, 'per_page': 8})}")
-    except HTTPException as error:
+    except RequestError as error:
         if error.status_code in {403, 422, 429, 502}:
             return
         raise
@@ -465,10 +465,10 @@ def live_evidence(get, repo, question):
 
 
 def load_snapshot(repo_id):
-    with db() as conn:
-        row = conn.execute("SELECT chunks, vectors FROM repository_indexes WHERE repo_id = ?", (repo_id,)).fetchone()
-    evidence = [Evidence(**item) for item in json.loads(row["chunks"])] if row and row["chunks"] else []
-    return evidence, row["vectors"] if row else None
+    row = RepositoryIndex.objects.filter(pk=repo_id).values("chunks", "vectors").first()
+    if not row:
+        return [], None
+    return [Evidence(**item) for item in row["chunks"]], row["vectors"]
 
 
 def repository_intent(question):
@@ -610,7 +610,7 @@ def readme_excerpt(evidence):
 def retrieve(repo_id, question, live, include_files=True):
     indexed, embeddings = load_snapshot(repo_id)
     vectors = None
-    if embeddings and indexed and ":swe-qa:" not in repo_id and env_bool("REPOSITORY_LOCAL_EMBEDDINGS"):
+    if embeddings and indexed and ":swe-qa:" not in repo_id and os.getenv("REPOSITORY_LOCAL_EMBEDDINGS", "").lower() in {"1", "true", "yes", "on"}:
         vectors = np.frombuffer(embeddings, dtype=np.float32).reshape((len(indexed), -1))
     return rank_evidence(question, indexed, live, include_files=include_files, vectors=vectors)
 

@@ -18,34 +18,41 @@ type SessionData = {
 };
 
 type AuthResult = {
-  data?: { user?: AuthUser; session?: { token?: string } };
+  data?: { user?: AuthUser; session?: { token?: string }; callbackPath?: string };
   error?: { message?: string } | null;
 };
 
 const SESSION_TOKEN_KEY = "reszvault-session-token";
-const GITHUB_VERIFIER_KEY = "reszvault-github-verifier";
+type SocialProvider = "github" | "google";
 
-export async function startGitHubSignIn() {
+const verifierKey = (provider: SocialProvider) => `reszvault-${provider}-verifier`;
+
+async function startSocialSignIn(provider: SocialProvider, callbackPath?: string) {
   const bytes = crypto.getRandomValues(new Uint8Array(32));
   const verifier = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier));
   const challenge = btoa(String.fromCharCode(...new Uint8Array(digest)))
     .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-  window.sessionStorage.setItem(GITHUB_VERIFIER_KEY, verifier);
-  window.location.assign(`/api/auth/github/start?challenge=${encodeURIComponent(challenge)}`);
+  window.sessionStorage.setItem(verifierKey(provider), verifier);
+  const params = new URLSearchParams({ challenge });
+  if (callbackPath) params.set("callbackURL", callbackPath);
+  window.location.assign(`${getApiBase()}/api/auth/${provider}/start?${params}`);
 }
 
-export async function finishGitHubSignIn(code: string) {
-  const verifier = window.sessionStorage.getItem(GITHUB_VERIFIER_KEY);
-  window.sessionStorage.removeItem(GITHUB_VERIFIER_KEY);
-  if (!verifier) throw new Error("Start GitHub sign-in again in this tab.");
-  const result = await authFetch("/api/auth/github/exchange", {
+export const startGitHubSignIn = () => startSocialSignIn("github");
+
+export async function finishSocialSignIn(provider: SocialProvider, code: string) {
+  const verifier = window.sessionStorage.getItem(verifierKey(provider));
+  window.sessionStorage.removeItem(verifierKey(provider));
+  if (!verifier) throw new Error("Start sign-in again in this tab.");
+  const result = await authFetch(`/api/auth/${provider}/exchange`, {
     method: "POST",
     body: JSON.stringify({ code, verifier }),
   });
   if (!result.data?.session?.token) {
-    throw new Error(result.error?.message ?? "GitHub sign-in could not be completed.");
+    throw new Error(result.error?.message ?? "Sign-in could not be completed.");
   }
+  return result.data.callbackPath ?? (provider === "github" ? "/app" : "/projects");
 }
 
 export function getSessionToken(): string {
@@ -76,10 +83,7 @@ async function authFetch(path: string, init?: RequestInit): Promise<AuthResult> 
   if (!response.headers.get("content-type")?.includes("application/json")) {
     return { error: { message: "The authentication service is unavailable. Try again shortly." } };
   }
-  const body = (await response.json().catch(() => ({}))) as AuthResult & {
-    detail?: string;
-    data?: { session?: { token?: string } };
-  };
+  const body = (await response.json().catch(() => ({}))) as AuthResult & { detail?: string };
   if (!response.ok) {
     return { error: { message: body.detail ?? body.error?.message ?? `Request failed (${response.status})` } };
   }
@@ -182,7 +186,7 @@ export const authClient = {
       }),
     social: async (payload: { provider: "google"; callbackURL: string }): Promise<AuthResult> => {
       const callback = new URL(payload.callbackURL).pathname || "/projects";
-      window.location.href = `${getApiBase()}/api/auth/google/start?callbackURL=${encodeURIComponent(callback)}`;
+      await startSocialSignIn(payload.provider, callback);
       return { error: null };
     },
   },

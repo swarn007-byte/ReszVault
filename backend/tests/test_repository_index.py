@@ -3,37 +3,39 @@ import hashlib
 import hmac
 import json
 import os
-import tempfile
-import unittest
-from pathlib import Path
 from unittest.mock import patch
 
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
+from datetime import timedelta
+
+from django.test import TestCase
+from django.utils import timezone
+from rest_framework.test import APIClient
+from vaults.models import Account, AppSession, GithubSession, RepositoryIndex
 
 import github_research
 import repository_index as index
-import storage
 import swe_qa_baseline as baseline
 
 
-class RepositoryIndexTest(unittest.TestCase):
-    def setUp(self):
-        self.directory = tempfile.TemporaryDirectory()
-        self.addCleanup(self.directory.cleanup)
-        path = Path(self.directory.name)
-        for name, value in {"DATA_DIR": path, "UPLOAD_DIR": path / "uploads", "DB_PATH": path / "db.sqlite3"}.items():
-            patcher = patch.object(storage, name, value)
-            patcher.start()
-            self.addCleanup(patcher.stop)
-        storage.init_db()
-        with storage.db() as conn:
-            conn.execute("INSERT INTO users VALUES (?, ?, ?, ?, ?, ?)",
-                         ("user", "Contributor", "user@example.com", None, None, storage.utc_now()))
-            conn.execute("INSERT INTO sessions VALUES (?, ?, ?, ?)",
-                         ("session", "user", "2099-01-01", storage.utc_now()))
-            conn.execute("INSERT INTO github_sessions VALUES (?, ?)", ("session", "token"))
+class RepositoryIndexTest(TestCase):
+    @classmethod
+    def setUpTestData(cls):
+        user = Account.objects.create(id="user", name="Contributor", email="user@example.com")
+        session = AppSession.objects.create(token="session", user=user, expires_at=timezone.now() + timedelta(days=1))
+        GithubSession.objects.create(session=session, access_token="token")
 
+    def setUp(self):
+        self.client = APIClient()
+        pending = []
+        self.jobs = pending
+        patcher = patch.object(github_research, "schedule_sync", side_effect=lambda *args: pending.append(args))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def finish_indexing(self):
+        for args in self.jobs:
+            index.synchronize_repository(github_research.github_request, *args)
+        self.jobs.clear()
 
     def fixture(self, path, token=None, **kwargs):
         base = "/repos/acme/tools"
@@ -112,9 +114,7 @@ class RepositoryIndexTest(unittest.TestCase):
         self.assertFalse(index.retrieve(index.index_key({**repo, "private": True}), "Redis", []))
 
     def test_authenticated_chat_uses_index_and_keeps_private_evidence_local(self):
-        app = FastAPI()
-        github_research.register_github_routes(app, None)
-        client = TestClient(app)
+        client = self.client
 
         repo = {"id": 91, "full_name": "acme/tools", "html_url": "https://github.com/acme/tools",
                 "default_branch": "main", "size": 10, "private": True,
@@ -147,8 +147,9 @@ class RepositoryIndexTest(unittest.TestCase):
             url = "/api/github/repositories/acme/tools/index"
             self.assertEqual(client.post(url).status_code, 401)
             self.assertEqual(client.post(url, headers=headers).json()["state"], "syncing")
+            self.finish_indexing()
             self.assertEqual(client.get(url, headers=headers).json()["state"], "ready")
-            response = client.post("/api/github/chat", headers=headers, json={
+            response = client.post("/api/github/chat", headers=headers, format="json", data={
                 "repository": "acme/tools", "question": "How do I initialize the SQLite database?",
             })
             self.assertEqual(response.status_code, 200)
@@ -161,12 +162,12 @@ class RepositoryIndexTest(unittest.TestCase):
                 ("what are things u have access to", "Documentation: 1"),
                 ("What can you access?", "Documentation: 1"),
             ):
-                result = client.post("/api/github/chat", headers=headers, json={
+                result = client.post("/api/github/chat", headers=headers, format="json", data={
                     "repository": "acme/tools", "question": question,
                 }).json()
                 self.assertIn(expected, result["answer"])
                 self.assertNotIn("I found these excerpts", result["answer"])
-            folders = client.post("/api/github/chat", headers=headers, json={
+            folders = client.post("/api/github/chat", headers=headers, format="json", data={
                 "repository": "acme/tools", "question": "what are folders in this repo",
             }).json()
             self.assertIn("**internal/**", folders["answer"])
@@ -178,28 +179,26 @@ class RepositoryIndexTest(unittest.TestCase):
                 ("readme.md", "## Installation", "/README.md"),
                 ("give main.go", "func main() {}", "/main.go"),
             ):
-                result = client.post("/api/github/chat", headers=headers, json={
+                result = client.post("/api/github/chat", headers=headers, format="json", data={
                     "repository": "acme/tools", "question": question,
                 }).json()
                 self.assertIn(expected, result["answer"])
                 self.assertTrue(result["sources"][0]["url"].endswith(source))
                 if question == "give me project pipeline":
                     self.assertNotIn("Installation", result["answer"])
-            follow_up = client.post("/api/github/chat", headers=headers, json={
+            follow_up = client.post("/api/github/chat", headers=headers, format="json", data={
                 "repository": "acme/tools", "question": "Where is that implemented?",
                 "previous_questions": ["How do I initialize the SQLite database?", "What can you access?"],
             }).json()
             self.assertIn("Use the run script", follow_up["answer"])
-            unsupported = client.post("/api/github/chat", headers=headers, json={
+            unsupported = client.post("/api/github/chat", headers=headers, format="json", data={
                 "repository": "acme/tools", "question": "Do tools support quantum teleportation?",
             }).json()
             self.assertEqual(unsupported["sources"], [])
             model.assert_not_called()
 
     def test_swe_qa_mode_runs_public_code_pipeline(self):
-        app = FastAPI()
-        github_research.register_github_routes(app, None)
-        client = TestClient(app)
+        client = self.client
         repo = {"id": 91, "full_name": "acme/tools", "html_url": "https://github.com/acme/tools",
                 "default_branch": "main", "size": 10, "private": False, "archive_url": "configured"}
         contents = "\n".join(["pass"] * 649 + ["def retry_delivery():"])
@@ -236,7 +235,8 @@ class RepositoryIndexTest(unittest.TestCase):
         ):
             self.assertEqual(client.post("/api/github/repositories/acme/tools/index", headers=headers)
                              .json()["state"], "syncing")
-            result = client.post("/api/github/chat", headers=headers, json={
+            self.finish_indexing()
+            result = client.post("/api/github/chat", headers=headers, format="json", data={
                 "repository": "acme/tools", "question": "How does retry work?",
             })
             self.assertEqual(result.status_code, 200)
@@ -249,22 +249,14 @@ class RepositoryIndexTest(unittest.TestCase):
     def test_signed_webhook_invalidates_index(self):
         key = "91:public"
         index.claim_sync(key)
-        app = FastAPI()
-        github_research.register_github_routes(app, None)
-        client = TestClient(app)
+        client = self.client
         payload = json.dumps({"repository": {"id": 91}}).encode()
         signature = "sha256=" + hmac.new(b"fixture-secret", payload, hashlib.sha256).hexdigest()
         url = "/api/github/webhook"
         with patch.dict(os.environ, {"GITHUB_WEBHOOK_SECRET": "fixture-secret"}):
-            denied = client.post(url, content=payload, headers={"x-github-event": "push"})
+            denied = client.post(url, data=payload, content_type="application/json", headers={"x-github-event": "push"})
             self.assertEqual(denied.status_code, 401)
-            result = client.post(url, content=payload, headers={"x-github-event": "push",
+            result = client.post(url, data=payload, content_type="application/json", headers={"x-github-event": "push",
                                                                 "x-hub-signature-256": signature})
         self.assertEqual(result.status_code, 202)
-        with storage.db() as conn:
-            row = conn.execute("SELECT stale FROM repository_indexes WHERE repo_id = ?", (key,)).fetchone()
-            self.assertEqual(row["stale"], 1)
-
-
-if __name__ == "__main__":
-    unittest.main()
+        self.assertEqual(RepositoryIndex.objects.get(pk=key).stale, 1)

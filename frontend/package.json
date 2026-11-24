@@ -11,9 +11,7 @@
     "test:e2e": "playwright test"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.106.2",
     "axios": "^1.16.1",
-    "better-auth": "^1.6.12",
     "date-fns": "^4.3.0",
     "framer-motion": "^12.40.0",
     "react": "^19.2.6",

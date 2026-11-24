@@ -14,11 +14,13 @@ Design:
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import urllib.request
 from dataclasses import dataclass, field
 from functools import lru_cache
+from importlib.util import find_spec
 
 import numpy as np
 from rank_bm25 import BM25Okapi
@@ -195,6 +197,30 @@ def retrieve_chunks_hybrid(
     ]
 
 
+QUERY_STOP_WORDS = frozenset(
+    "a an are at be by can do does did for from how i in is it of on or the to was what when where which who with you".split()
+)
+logger = logging.getLogger(__name__)
+
+
+def local_embeddings_available():
+    return os.getenv("RESZVAULT_LOCAL_EMBEDDINGS", "1") != "0" and find_spec("sentence_transformers") is not None
+
+
+def retrieve_keywords(question, books, top_k):
+    terms = set(tokenize_text(question)) - QUERY_STOP_WORDS
+    if not terms:
+        return []
+    matches = []
+    for book in books:
+        for chunk in book.chunks:
+            score = len(terms.intersection(tokenize_text(chunk.text)))
+            if score >= min(2, len(terms)):
+                matches.append((score, book.title, chunk))
+    matches.sort(key=lambda match: match[0], reverse=True)
+    return matches[:top_k]
+
+
 def retrieve_across_books(
     question: str,
     books: list[BookContext],
@@ -203,19 +229,31 @@ def retrieve_across_books(
     use_hybrid: bool = True,
 ) -> list[tuple[float, str, Chunk]]:
     """Retrieve top chunks ranked GLOBALLY across all books. Returns (score, title, chunk)."""
+    if force_all:
+        return [(1.0, book.title, chunk) for book in books for chunk in book.chunks[:40]]
+    if not local_embeddings_available():
+        return retrieve_keywords(question, books, top_k)
+    try:
+        return retrieve_dense_and_hybrid(question, books, top_k, use_hybrid)
+    except (ImportError, OSError, RuntimeError):
+        logger.warning("Local embeddings unavailable; using keyword retrieval.")
+        return retrieve_keywords(question, books, top_k)
+
+
+def retrieve_dense_and_hybrid(question, books, top_k, use_hybrid):
     query_vec = embed_texts([question])[0]
     pooled: list[tuple[float, str, Chunk]] = []
 
     for book in books:
         if use_hybrid:
-            for score, chunk in retrieve_chunks_hybrid(book, question, query_vec, force_all=force_all, top_k=top_k):
+            for score, chunk in retrieve_chunks_hybrid(book, question, query_vec, top_k=top_k):
                 pooled.append((score, book.title, chunk))
         else:
-            for score, chunk in retrieve_chunks(book, query_vec, force_all=force_all, top_k=top_k):
+            for score, chunk in retrieve_chunks(book, query_vec, top_k=top_k):
                 pooled.append((score, book.title, chunk))
 
     pooled.sort(key=lambda item: item[0], reverse=True)
-    return pooled if force_all else pooled[:top_k]
+    return pooled[:top_k]
 
 
 def split_sentences(text: str) -> list[str]:
@@ -399,17 +437,30 @@ def extractive_answer(
     if not candidates:
         return MISSING_REPLY
 
-    query_vec = embed_texts([question])[0]
-    sentence_vecs = embed_texts([sentence for _, sentence in candidates])
-    scores = cosine_scores(query_vec, sentence_vecs)
-
-    ranked = sorted(zip(scores, candidates), key=lambda item: item[0], reverse=True)
-    top = [item for item in ranked if item[0] >= MIN_SIMILARITY][:3]
+    top = rank_sentences(question, candidates)
     if not top:
         return MISSING_REPLY
 
     lines = [f"From **{title}**: {sentence}" for _, (title, sentence) in top]
     return "\n- " + "\n- ".join(lines)
+
+
+def rank_sentences(question, candidates):
+    if local_embeddings_available():
+        try:
+            query_vec = embed_texts([question])[0]
+            sentence_vecs = embed_texts([sentence for _, sentence in candidates])
+            scores = cosine_scores(query_vec, sentence_vecs)
+            ranked = sorted(zip(scores, candidates), key=lambda item: item[0], reverse=True)
+            return [item for item in ranked if item[0] >= MIN_SIMILARITY][:3]
+        except (ImportError, OSError, RuntimeError):
+            logger.warning("Local embeddings unavailable for extractive ranking.")
+
+    terms = set(tokenize_text(question)) - QUERY_STOP_WORDS
+    ranked = [(len(terms.intersection(tokenize_text(sentence))), (title, sentence))
+              for title, sentence in candidates]
+    ranked.sort(key=lambda item: item[0], reverse=True)
+    return [item for item in ranked if item[0] > 0][:3]
 
 
 def answer_question(
@@ -419,13 +470,6 @@ def answer_question(
 ) -> tuple[str, int]:
     result = prepare_context(question, books, use_hybrid=use_hybrid)
     if result.is_final_answer:
-        # If we have books but retrieval failed, still try Groq with full
-        # document context so it can attempt an answer.
-        if books and result.used_chunks == 0:
-            full_context = extractive_project_summary(books)
-            answer = groq_complete(build_prompt(question, full_context))
-            if answer:
-                return answer.strip(), len(books)
         return result.text, result.used_chunks
 
     answer = groq_complete(build_prompt(question, result.text))
