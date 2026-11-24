@@ -11,7 +11,8 @@ from rest_framework.decorators import api_view
 from rest_framework.response import Response
 
 from document_parser import Chunk as TextChunk, split_pdf_chunks
-from rag import BookContext, answer_question
+from pdf_comparison import answer_from_vault
+from rag import BookContext
 
 from .authentication import request_owner
 from .http import RequestError
@@ -130,7 +131,7 @@ def resolve_answer(request):
     if failed and not any(book.status == "ready" for book in books):
         raise RequestError(409, failed.error or "The selected PDFs failed during indexing.")
     contexts = book_contexts(books)
-    answer, sources = answer_question(payload["question"], contexts, use_hybrid=payload["useHybrid"])
+    answer, sources = answer_from_vault(payload["question"], contexts, use_hybrid=payload["useHybrid"])
     return {"success": True, "question": payload["question"], "answer": answer, "sourcesUsed": sources}
 
 

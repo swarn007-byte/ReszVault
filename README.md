@@ -54,6 +54,12 @@ If the old demo Compose project is still running, free the ports with `docker co
 
 Use `GROQ_API_KEY` in `backend/.env` to enable generated answers from retrieved context. The default installation supports local keyword retrieval and extractive answers. For local semantic or hybrid ranking, install `backend/requirements-embeddings.txt` in an environment with enough memory. The first use downloads the embedding model.
 
+## Compare PDF policies
+
+Upload both [return-policy.pdf](frontend/e2e/fixtures/return-policy.pdf) and [short-return-policy.pdf](frontend/e2e/fixtures/short-return-policy.pdf) into the same vault. Ask **Is the return window 15 or 30 days?**. ReszVault quotes both pages and explains that the available evidence does not determine which policy applies.
+
+For multi-document questions, [the LangGraph workflow](backend/pdf_comparison.py) retrieves passages per selected document. When sources give different numeric durations, a second pass checks the relevant documents for explicit scope and effective dates. For example, a policy can state `Scope: online orders` and `Effective date: 2025-06-01`. Ask with the scope or with an ISO as-of date to see whether the available evidence establishes a rule. If metadata is missing or ambiguous, both versions stay visible. The policy comparison works without an API key.
+
 ## Tests
 
 Start the local PostgreSQL service and run migrations first. Keep the Python environment active for both commands.
@@ -65,7 +71,7 @@ npx playwright install chromium
 npm run test:e2e
 ```
 
-Playwright starts separate Django and Vite processes. The backend suite covers PDF ownership, upload and deletion, stream messages, authentication, GitHub indexing, and import compatibility.
+Playwright starts separate Django and Vite processes. The backend suite covers PDF ownership, upload and deletion, stream messages, policy comparison, authentication, GitHub indexing, and import compatibility.
 
 ## MCP search
 

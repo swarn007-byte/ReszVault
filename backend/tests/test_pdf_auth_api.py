@@ -52,6 +52,19 @@ class PDFWorkflowTests(TestCase):
         self.assertEqual(self.api.delete(f"/books/{returns['id']}", headers=self.guest).status_code, 200)
         self.assertFalse(Chunk.objects.filter(book_id=returns["id"]).exists())
 
+    def test_multi_pdf_chat_compares_only_selected_owned_documents(self):
+        returns = self.upload("return-policy.pdf")
+        short = self.upload("short-return-policy.pdf")
+        hidden = self.upload("short-return-policy.pdf", headers=self.other_guest)
+        Book.objects.filter(pk=hidden["id"]).update(title="Unowned fixture")
+        self.assertIn("30 days", self.ask([returns["id"], hidden["id"]]).data["answer"])
+
+        response = self.ask([returns["id"], short["id"], hidden["id"]])
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("return-policy (page 1)", response.data["answer"])
+        self.assertIn("short-return-policy (page 1)", response.data["answer"])
+        self.assertNotIn("Unowned fixture", response.data["answer"])
+
     def test_stream_uses_frontend_event_format(self):
         book = self.upload("return-policy.pdf")
         result = self.api.post(

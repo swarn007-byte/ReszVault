@@ -10,3 +10,4 @@ python-dotenv>=1,<2
 numpy>=1.24,<3
 pypdf>=4.2,<8
 rank-bm25>=0.2.2,<0.3
+langgraph>=1.2,<2

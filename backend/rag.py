@@ -207,18 +207,30 @@ def local_embeddings_available():
     return os.getenv("RESZVAULT_LOCAL_EMBEDDINGS", "1") != "0" and find_spec("sentence_transformers") is not None
 
 
-def retrieve_keywords(question, books, top_k):
+def retrieve_by_book(question, books, top_k, use_hybrid=True):
+    if local_embeddings_available():
+        try:
+            query_vec = embed_texts([question])[0]
+            return [
+                (book, retrieve_chunks_hybrid(book, question, query_vec, top_k=top_k)
+                 if use_hybrid else retrieve_chunks(book, query_vec, top_k=top_k))
+                for book in books
+            ]
+        except (ImportError, OSError, RuntimeError):
+            logger.warning("Local embeddings unavailable; using keyword retrieval.")
+
     terms = set(tokenize_text(question)) - QUERY_STOP_WORDS
-    if not terms:
-        return []
-    matches = []
+    results = []
     for book in books:
-        for chunk in book.chunks:
-            score = len(terms.intersection(tokenize_text(chunk.text)))
-            if score >= min(2, len(terms)):
-                matches.append((score, book.title, chunk))
-    matches.sort(key=lambda match: match[0], reverse=True)
-    return matches[:top_k]
+        matches = []
+        if terms:
+            for chunk in book.chunks:
+                score = len(terms.intersection(tokenize_text(chunk.text)))
+                if score >= min(2, len(terms)):
+                    matches.append((score, chunk))
+            matches.sort(key=lambda match: match[0], reverse=True)
+        results.append((book, matches[:top_k]))
+    return results
 
 
 def retrieve_across_books(
@@ -228,30 +240,17 @@ def retrieve_across_books(
     top_k: int = TOP_K,
     use_hybrid: bool = True,
 ) -> list[tuple[float, str, Chunk]]:
-    """Retrieve top chunks ranked GLOBALLY across all books. Returns (score, title, chunk)."""
+    """Retrieve the highest-ranked chunks across all books."""
+    if not books:
+        return []
     if force_all:
         return [(1.0, book.title, chunk) for book in books for chunk in book.chunks[:40]]
-    if not local_embeddings_available():
-        return retrieve_keywords(question, books, top_k)
-    try:
-        return retrieve_dense_and_hybrid(question, books, top_k, use_hybrid)
-    except (ImportError, OSError, RuntimeError):
-        logger.warning("Local embeddings unavailable; using keyword retrieval.")
-        return retrieve_keywords(question, books, top_k)
 
-
-def retrieve_dense_and_hybrid(question, books, top_k, use_hybrid):
-    query_vec = embed_texts([question])[0]
-    pooled: list[tuple[float, str, Chunk]] = []
-
-    for book in books:
-        if use_hybrid:
-            for score, chunk in retrieve_chunks_hybrid(book, question, query_vec, top_k=top_k):
-                pooled.append((score, book.title, chunk))
-        else:
-            for score, chunk in retrieve_chunks(book, query_vec, top_k=top_k):
-                pooled.append((score, book.title, chunk))
-
+    pooled = [
+        (score, book.title, chunk)
+        for book, matches in retrieve_by_book(question, books, top_k, use_hybrid)
+        for score, chunk in matches
+    ]
     pooled.sort(key=lambda item: item[0], reverse=True)
     return pooled[:top_k]
 
