@@ -4,10 +4,17 @@ services:
     runtime: python
     rootDir: backend
     plan: free
-    buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    autoDeployTrigger: 'off'
+    buildCommand: pip install -r requirements.txt && python manage.py collectstatic --noinput
+    startCommand: python manage.py migrate --noinput && gunicorn config.wsgi:application --bind 0.0.0.0:$PORT --worker-class gthread --threads 4 --timeout 120
     healthCheckPath: /health
     envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: DJANGO_SECRET_KEY
+        generateValue: true
+      - key: DJANGO_DEBUG
+        value: '0'
       - key: FRONTEND_ORIGIN
         value: https://reszvault.vercel.app
       - key: BACKEND_PUBLIC_URL
