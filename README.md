@@ -76,8 +76,69 @@ Deployment:
 ReszVault/
 ├── frontend/     # React + Vite application
 ├── backend/      # Python FastAPI API
+├── django_demo/  # Local Django REST and PostgreSQL demo
 └── render.yaml   # Render deployment config
 ```
+
+## Local Django Demo
+
+This demo runs a PDF question through React, Django REST Framework, and PostgreSQL. The two included PDF fixtures are parsed with `backend/document_parser.py`. Django stores the results as `Vault → Source → Chunk` and filters passages by vault before ranking them. By default the answer shows the matched excerpts and page numbers. Set `RESZVAULT_DEMO_USE_GROQ=1` and `GROQ_API_KEY` in the Django server's environment to generate a response using the retrieved passages.
+
+The demo is for local use with sample data. The deployed app runs on the FastAPI stack documented below.
+
+### Start the demo
+
+You need Python 3.11+, Node.js 22.12+ or 24+, and Docker Compose. From the repo root, run:
+
+```bash
+docker compose -f django_demo/compose.yaml up -d --wait
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install -r django_demo/requirements.txt
+python django_demo/manage.py migrate
+python django_demo/manage.py seed_demo
+python django_demo/manage.py createsuperuser
+python django_demo/manage.py runserver 127.0.0.1:8001
+```
+
+On Windows PowerShell, activate the environment with `.venv\Scripts\Activate.ps1`.
+
+In a second terminal:
+
+```bash
+cd frontend
+npm ci
+npm run dev -- --host 127.0.0.1 --port 5175 --strictPort
+```
+
+Open [the demo on port 5175](http://127.0.0.1:5175/django-demo). Select **Returns** and ask **What is the return window?**. The answer should include **30 days from delivery** and cite page 1 of the return policy. Select **Shipping** and ask the same question to see the no-match response.
+
+- **Django admin** is at [port 8001](http://127.0.0.1:8001/admin/). Sign in with the superuser you created to inspect vaults, sources, and chunks.
+- **pgAdmin** is at [port 5050](http://127.0.0.1:5050). Sign in with `demo@example.com` / `reszvault-demo`. Open the registered **ReszVault Demo** server and enter the PostgreSQL password `reszvault-demo`. Look under **Databases → reszvault → Schemas → public → Tables** for `vaults_source` and `vaults_chunk`. To register the server manually with the defaults, use host `db`, port `5432`, maintenance database `postgres`, and username `reszvault`.
+- **REST API** exposes `GET /api/demo/vaults/` and `POST /api/demo/vaults/<slug>/ask/` with a JSON body containing `question`.
+
+### Run browser tests
+
+Keep PostgreSQL running and run migrations and `seed_demo` first. In a terminal with the Python environment activated:
+
+```bash
+cd frontend
+npm ci
+npx playwright install chromium
+npm run test:e2e
+```
+
+Playwright starts its own Django and Vite processes. The browser test checks the Returns answer and its page citation, the same question's no-match response in Shipping, and a successful Shipping answer. To run the Django tests from the repo root, use `python django_demo/manage.py test vaults`.
+
+### Try the read-only MCP tool
+
+With the database running and the demo Python environment active, install the optional requirements:
+
+```bash
+python -m pip install -r django_demo/requirements-mcp.txt
+```
+
+Configure your MCP client for stdio. Use the absolute path to the demo environment's Python executable as the command, with the absolute path to `django_demo/manage.py` and `vault_mcp` as arguments. The `search_vault_sources` tool takes `vault_slug` and `question` and returns matching passages with page numbers.
 
 ## Local Development
 
