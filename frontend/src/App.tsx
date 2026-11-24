@@ -4,6 +4,9 @@ import { ChatPage } from "./pages/Chat";
 import { Settings } from "./pages/Settings";
 import { Home } from "./pages/Home";
 import { ProjectsPage } from "./pages/Projects";
+import { WorkspacesPage } from "./pages/Workspaces";
+import { ProjectWorkspacePage } from "./pages/ProjectWorkspace";
+import "./workspaces.css";
 
 export default function App() {
   return (
@@ -12,6 +15,9 @@ export default function App() {
         <Route path="/" element={<Home />} />
         <Route path="/login" element={<AuthPage />} />
         <Route path="/projects" element={<ProjectsPage />} />
+        <Route path="/workspaces" element={<WorkspacesPage />} />
+        <Route path="/workspaces/:projectId" element={<ProjectWorkspacePage />} />
+        <Route path="/workspaces/:projectId/:chatId" element={<ProjectWorkspacePage />} />
         <Route path="/guest" element={<ChatPage allowGuest />} />
         <Route path="/guest/:id" element={<ChatPage allowGuest />} />
         <Route path="/app" element={<ChatPage />} />

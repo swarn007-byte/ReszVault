@@ -18,7 +18,7 @@ export default defineConfig({
     port: 5175,
     strictPort: true,
     proxy: Object.fromEntries(
-      ["/api/auth", "/api/github", "/auth/providers", "^/books", "^/chat", "/health"].map((path) => [
+      ["/api/auth", "/api/github", "/api/projects", "/auth/providers", "^/books", "^/chat", "/health"].map((path) => [
         path,
         { target: apiTarget },
       ]),

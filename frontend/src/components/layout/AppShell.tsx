@@ -131,7 +131,7 @@ export function AppShell({ userId, pdfWorkspace }: { userId?: string; pdfWorkspa
 
   const selectedChat = id ? getChat(id) : undefined;
   const ownsChat = selectedChat?.ownerId === userId;
-  const activeChat = selectedChat && (selectedChat.repository
+  const activeChat = selectedChat && !selectedChat.projectId && (selectedChat.repository
     ? chatBasePath === "/app" && ownsChat
     : ownsChat || (chatBasePath === "/app" && !selectedChat.ownerId))
     ? selectedChat

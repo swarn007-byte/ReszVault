@@ -12,6 +12,7 @@ export type Chat = {
   id: string;
   title: string;
   repository?: string;
+  projectId?: string;
   ownerId?: string;
   messages: Message[];
   updatedAt: string;
@@ -28,7 +29,7 @@ type ChatState = {
   setHistoryLoading: (loading: boolean) => void;
   setIsSending: (sending: boolean) => void;
   setActiveChat: (id: string | null) => void;
-  createChat: (repository?: string, ownerId?: string) => string;
+  createChat: (repository?: string, ownerId?: string, projectId?: string) => string;
   deleteChat: (id: string) => void;
   addMessage: (chatId: string, message: Omit<Message, "id" | "createdAt">) => string;
   appendToMessage: (chatId: string, messageId: string, delta: string) => void;
@@ -79,7 +80,7 @@ export const useChatStore = create<ChatState>()(
       setIsSending: (sending) => set({ isSending: sending }),
       setActiveChat: (id) => set({ activeChatId: id }),
 
-      createChat: (repository, ownerId) => {
+      createChat: (repository, ownerId, projectId) => {
         const id = crypto.randomUUID();
         const now = new Date().toISOString();
         const chat: Chat = {
@@ -87,6 +88,7 @@ export const useChatStore = create<ChatState>()(
           title: "New chat",
           repository,
           ownerId,
+          projectId,
           messages: [],
           updatedAt: now,
           createdAt: now,

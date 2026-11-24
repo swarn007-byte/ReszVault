@@ -2,6 +2,12 @@
 
 ReszVault is a research workspace for asking questions about PDFs and GitHub repositories. Upload PDFs into a React vault, ask a question, and follow the answer back to its source. Django REST Framework serves authentication, uploads, chat, and GitHub research. PostgreSQL stores accounts, sessions, PDFs, extracted chunks, and repository indexes.
 
+## Project workspaces
+
+Sign in, open **Projects** from the sidebar, and select **New project**. Each project starts with an empty source list and chat history. Add PDFs and GitHub repositories in the same workspace, then ask a follow-up such as **How does this repository relate to the uploaded PDF?** GitHub citations link to the source. PDF citations identify the document and page.
+
+PostgreSQL stores projects and their source memberships. Chat history is saved in the browser and scoped to the signed-in account and project. Public repositories can be attached by any signed-in account. Private repositories require GitHub sign-in and repository access. If a project includes a private repository, comparison uses local excerpts without sending its content to Groq. The earlier GitHub Chat and PDF Vault remain available from the sidebar.
+
 ## Run locally
 
 With Docker Compose v2.24+, start React, Django, PostgreSQL, and pgAdmin from the repository root.

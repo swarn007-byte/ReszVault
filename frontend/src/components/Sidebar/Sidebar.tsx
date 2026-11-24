@@ -22,7 +22,7 @@ export function Sidebar({ activeChatId, chatBasePath, onCloseMobile, repositoryM
   const createProject = useProjectStore((state) => state.createProject);
   const isGuestRoute = chatBasePath === "/guest";
   const chatHistory = isGuestRoute || !user ? [] : chats.filter(
-    (chat) => Boolean(chat.repository) === repositoryMode && chat.ownerId === user.id,
+    (chat) => !chat.projectId && Boolean(chat.repository) === repositoryMode && chat.ownerId === user.id,
   );
 
   const handleNewChat = () => {
@@ -87,6 +87,15 @@ export function Sidebar({ activeChatId, chatBasePath, onCloseMobile, repositoryM
             </svg>
             New Chat
           </button>
+          {!isGuestRoute && (
+            <Link
+              to="/workspaces"
+              onClick={onCloseMobile}
+              className="mt-2 flex w-full justify-center rounded-lg border border-[#e1ccb6] bg-[#fff7ef] px-4 py-2.5 text-sm font-semibold text-[#743c19] transition hover:bg-[#faebdc]"
+            >
+              Projects
+            </Link>
+          )}
           {!isGuestRoute && (
             <Link
               to={repositoryMode ? "/app/pdfs" : "/app"}
