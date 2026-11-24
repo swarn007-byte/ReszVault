@@ -1,115 +1,20 @@
 # ReszVault
 
-ReszVault is a source-grounded research workspace for multi-document chat.
+ReszVault is a research workspace for asking questions about PDFs and GitHub repositories. Upload PDFs into a React vault, ask a question, and follow the answer back to its source. Django REST Framework serves authentication, uploads, chat, and GitHub research. PostgreSQL stores accounts, sessions, PDFs, extracted chunks, and repository indexes.
 
-Upload PDFs into a project vault, index them, and ask questions across the full project context instead of being stuck to a single file. The product combines a polished React frontend, a Python/FastAPI backend, retrieval-driven responses, project-based source organization, Google authentication, and Obsidian-style vault export.
+## Run locally
 
-Live:
-
-- Frontend: [https://reszvault.vercel.app](https://reszvault.vercel.app)
-- Backend: [https://reszvault.onrender.com](https://reszvault.onrender.com)
-
-**[Run the local Django demo](#local-django-demo)** to try vault-scoped PDF search with React, Django REST Framework, PostgreSQL, pgAdmin, Playwright, and an optional MCP tool.
-
-## Why ReszVault
-
-Most PDF chat tools break once research gets messy:
-
-- Context is trapped inside one uploaded file
-- Sources are hard to organize across multiple documents
-- Answers feel disconnected from the actual material
-- Research workflows have no visual memory or exportable structure
-
-ReszVault solves that by treating a project like a vault:
-
-- Multiple PDFs belong to one project
-- Retrieval runs across the whole project scope
-- Chat stays source-grounded
-- Indexed material can be exported into an Obsidian-friendly structure
-
-## Core Features
-
-- Multi-PDF project vaults
-- Source-grounded chat over indexed documents
-- PDF upload, parsing, chunking, and retrieval
-- Streaming chat responses
-- Google-based authentication
-- Guest mode for lightweight exploration
-- Project-scoped source management
-- Obsidian-style vault export with graph-ready note structure
-- Clean notebook-inspired UI for research workflows
-
-## Product Flow
-
-1. Sign in with Google or continue as guest
-2. Create a new vault or open an existing project
-3. Upload one or more PDFs
-4. Let ReszVault index and store document chunks
-5. Ask questions against the full project context
-6. Export the vault for graph-style exploration
-
-## Tech Stack
-
-Frontend:
-
-- React
-- TypeScript
-- Vite
-- Tailwind CSS
-- Framer Motion
-- Zustand
-
-Backend:
-
-- Python
-- FastAPI
-- Uvicorn
-- SQLite
-- `pypdf`
-
-Deployment:
-
-- Vercel for frontend
-- Render for backend
-
-## Repository Structure
-
-```text
-ReszVault/
-├── frontend/     # React + Vite application
-├── backend/      # Python FastAPI API
-├── django_demo/  # Local Django REST and PostgreSQL demo
-└── render.yaml   # Render deployment config
-```
-
-## Local Django Demo
-
-This demo runs a PDF question through React, Django REST Framework, and PostgreSQL. The two included PDF fixtures are parsed with `backend/document_parser.py`. Django stores the results as `Vault → Source → Chunk` and filters passages by vault before ranking them. By default the answer shows the matched excerpts and page numbers. Set `RESZVAULT_DEMO_USE_GROQ=1` and `GROQ_API_KEY` in the Django server's environment to generate a response using the retrieved passages.
-
-The demo is for local use with sample data. The deployed app runs on the FastAPI stack documented below.
-
-### Start the demo
-
-You need Python 3.11+, Node.js 22.12+, and Docker Compose. To get the project, run the following commands.
+Use Python 3.11+, Node.js 22.12+, and Docker Compose. From the repository root, run:
 
 ```bash
-git clone https://github.com/swarn007-byte/ReszVault.git
-cd ReszVault
-```
-
-If you already cloned ReszVault, switch to `main` and run `git pull --ff-only origin main`.
-
-From the repo root, start the database, apply migrations and load the sample PDFs.
-
-```bash
-docker compose -f django_demo/compose.yaml up -d --wait
+cp backend/.env.example backend/.env
+docker compose --env-file backend/.env -f backend/compose.yaml up -d --wait
 python -m venv .venv
 source .venv/bin/activate
-python -m pip install -r django_demo/requirements.txt
-python django_demo/manage.py migrate
-python django_demo/manage.py seed_demo
-python django_demo/manage.py createsuperuser
-python django_demo/manage.py runserver 127.0.0.1:8001
+python -m pip install -r backend/requirements.txt
+python backend/manage.py migrate
+python backend/manage.py createsuperuser
+python backend/manage.py runserver 127.0.0.1:8000
 ```
 
 On Windows PowerShell, activate the environment with `.venv\Scripts\Activate.ps1`.
@@ -119,156 +24,67 @@ In a second terminal:
 ```bash
 cd frontend
 npm ci
-npm run dev -- --host 127.0.0.1 --port 5175 --strictPort
+npm run dev
 ```
 
-### Demo walkthrough
-
-Open [the demo on port 5175](http://127.0.0.1:5175/django-demo). The sample vaults work without an LLM API key.
-
-| Vault | Question | Expected result |
-| --- | --- | --- |
-| Returns | What is the return window? | 30 days from delivery, with a citation to Return Policy, page 1 |
-| Shipping | What is the return window? | No matching passage in this vault |
-| Shipping | How long does standard shipping take? | Three business days, with a citation to Shipping Guide, page 1 |
-
-You can send the Returns question directly to the REST API.
-
-```bash
-curl -fsS http://127.0.0.1:8001/api/demo/vaults/returns/ask/ \
-  -H 'Content-Type: application/json' \
-  --data '{"question":"What is the return window?"}'
-```
-
-The response contains an `answer` and a `sources` array with each passage's title, page, and text.
-
-- **Django admin** is at [port 8001](http://127.0.0.1:8001/admin/). Sign in with the superuser you created to inspect vaults, sources, and chunks.
-- **pgAdmin** is at [port 5050](http://127.0.0.1:5050). Sign in with `demo@example.com` / `reszvault-demo`. Open the registered **ReszVault Demo** server and enter the PostgreSQL password `reszvault-demo`. Look under **Databases → reszvault → Schemas → public → Tables** for `vaults_source` and `vaults_chunk`. To register the server manually with the defaults, use host `db`, port `5432`, maintenance database `postgres`, and username `reszvault`.
-- **REST API** exposes `GET /api/demo/vaults/` and `POST /api/demo/vaults/<slug>/ask/` with a JSON body containing `question`.
-
-### Follow the request in code
-
-| Step | File |
+| Service | Local address |
 | --- | --- |
-| React sends the question for the selected vault | [DjangoDemo.tsx](frontend/src/pages/DjangoDemo.tsx) |
-| Django REST Framework validates the question and loads the vault | [views.py](django_demo/vaults/views.py) |
-| Django ORM loads the vault's chunks and the retrieval code ranks them | [models.py](django_demo/vaults/models.py) and [retrieval.py](django_demo/vaults/retrieval.py) |
-| MCP exposes the same retrieval as a read-only tool | [vault_mcp.py](django_demo/vaults/management/commands/vault_mcp.py) |
-| Playwright checks answers, citations, and vault isolation | [vault-search.spec.ts](frontend/e2e/vault-search.spec.ts) |
+| React workspace | [http://localhost:5175](http://localhost:5175) |
+| Django API health | [http://127.0.0.1:8000/health](http://127.0.0.1:8000/health) |
+| Django admin | [http://127.0.0.1:8000/admin/](http://127.0.0.1:8000/admin/) |
+| pgAdmin | [http://127.0.0.1:5050](http://127.0.0.1:5050) |
 
-### Run browser tests
+Sign in to Django admin with the superuser created during setup. In pgAdmin, use `demo@example.com` and `reszvault-demo`. Open the registered **ReszVault** server and use `reszvault-demo` as the default PostgreSQL password. The local PostgreSQL port is `55432`; pgAdmin reaches it at `db:5432` inside Compose.
 
-Keep PostgreSQL running and run migrations and `seed_demo` first. In a terminal with the Python environment activated:
+If the old demo Compose project is still running, free the ports with `docker compose -p django_demo -f backend/compose.yaml down` before starting the new one.
+
+## Walk through PDF Q&A
+
+1. Open the workspace and select **Continue as Guest**.
+2. Upload [return-policy.pdf](frontend/e2e/fixtures/return-policy.pdf) from the sidebar.
+3. Ask **What is the return window?** The answer should include **30 days from delivery** and identify the return policy as its source.
+4. Open Django admin and inspect the **Books** and **Chunks** records.
+
+| Step | Code |
+| --- | --- |
+| React sends the upload and question | [PDF requests](frontend/src/api/books.ts) and [chat requests](frontend/src/api/chat.ts) |
+| Django validates the PDF and stores the original and chunks together | [PDF views](backend/vaults/pdf_views.py) and [models](backend/vaults/models.py) |
+| Django filters documents by owner and selected IDs before retrieval | [Chat view](backend/vaults/pdf_views.py) and [ranking](backend/rag.py) |
+| Playwright uploads a PDF through the real guest workspace and verifies the answer and guest isolation | [Browser test](frontend/e2e/pdf-chat.spec.ts) |
+
+Use `GROQ_API_KEY` in `backend/.env` to enable generated answers from retrieved context. The default installation supports local keyword retrieval and extractive answers. For local semantic or hybrid ranking, install `backend/requirements-embeddings.txt` in an environment with enough memory. The first use downloads the embedding model.
+
+## Tests
+
+Start the local PostgreSQL service and run migrations first. Keep the Python environment active for both commands.
 
 ```bash
+python backend/manage.py test tests
 cd frontend
-npm ci
 npx playwright install chromium
 npm run test:e2e
 ```
 
-Playwright starts its own Django and Vite processes. The browser test checks the Returns answer and its page citation, the same question's no-match response in Shipping, and a successful Shipping answer. To run the Django tests from the repo root, use `python django_demo/manage.py test vaults`.
+Playwright starts separate Django and Vite processes. The backend suite covers PDF ownership, upload and deletion, stream messages, authentication, GitHub indexing, and import compatibility.
 
-### Try the read-only MCP tool
+## MCP search
 
-With the database running and the demo Python environment active, install the optional requirements:
+Install `backend/requirements-mcp.txt` in the backend Python environment. Configure the MCP client's stdio command to use that environment's Python executable and pass the absolute path to `backend/manage.py`, followed by `vault_mcp`. Set `RESZVAULT_MCP_SESSION_TOKEN` in the client's environment using a session issued by the ReszVault sign-in API. Keep that token private. The read-only `search_vault_sources` tool returns titles, page numbers, and matching passages for documents owned by that session. It also accepts an optional list of book IDs.
 
-```bash
-python -m pip install -r django_demo/requirements-mcp.txt
-```
+## Migrate an existing installation
 
-Configure your MCP client for stdio. Use the absolute path to the demo environment's Python executable as the command, with the absolute path to `django_demo/manage.py` and `vault_mcp` as arguments. The `search_vault_sources` tool takes `vault_slug` and `question` and returns matching passages with page numbers.
-
-## FastAPI Local Development
-
-### 1. Start the backend
+Back up the old SQLite database and its uploads directory before switching traffic. After running the Django migrations against an empty PostgreSQL database, import the backup:
 
 ```bash
-cd backend
-python3 -m venv .venv
-. .venv/bin/activate
-pip install -r requirements.txt
-uvicorn main:app --host 0.0.0.0 --port 3000 --reload
+python backend/manage.py import_legacy_sqlite /path/to/reszvault.sqlite3 --uploads-dir /path/to/uploads
 ```
 
-### 2. Start the frontend
+The command reads the backup without writing to it. It preserves account and document IDs, password hashes, session records, indexed text, repository indexes, and available PDF files. Re-running it retains existing PostgreSQL records. If an original PDF is missing from the backup, its indexed text remains available. Workspaces and chat history already saved by React stay in that browser.
 
-```bash
-cd frontend
-npm install
-npm run dev
-```
+For a hosted cutover, configure `DATABASE_URL`, `DJANGO_SECRET_KEY`, the frontend origin, and the existing OAuth provider credentials on the Django service. Apply migrations and import any legacy data before switching. The repository's [Render Blueprint](render.yaml) defines the Django server commands. Keep the frontend proxy pointed at the service that runs those commands.
 
-Frontend runs on `http://localhost:5175` and talks to the backend on `http://localhost:3000`.
-
-## Environment Setup
-
-Create `backend/.env` using `backend/.env.example`.
-
-Typical values:
-
-```env
-FRONTEND_ORIGIN=http://localhost:5175
-BACKEND_PUBLIC_URL=http://localhost:3000
-GROQ_API_KEY=your_key_here
-GOOGLE_CLIENT_ID=your_google_client_id
-GOOGLE_CLIENT_SECRET=your_google_client_secret
-```
-
-For Google OAuth, register these redirect URIs in Google Cloud Console:
-
-```text
-http://localhost:3000/api/auth/google/callback
-https://reszvault.vercel.app/api/auth/google/callback
-```
-
-## API Highlights
-
-- `GET /health` - backend health check
-- `GET /books` - list indexed project sources
-- `POST /books/upload` - upload and index a PDF
-- `DELETE /books/:id` - remove an indexed source
-- `POST /chat` - ask a question against the current vault
-- `POST /chat/stream` - streaming chat responses
-- `GET /api/auth/google/start` - start Google sign-in
-
-## Architecture Notes
-
-ReszVault uses a fairly direct RAG flow:
-
-1. PDFs are uploaded and parsed into text chunks
-2. Chunks are stored with project ownership in SQLite
-3. Chat requests gather all ready documents within the active project
-4. Relevant context is assembled and sent to the answering layer
-5. Responses stream back into the chat interface
-
-This keeps the product simple to run locally while still supporting real multi-document workflows.
-
-## What Makes It Interesting
-
-- It is not just a PDF viewer with chat bolted on
-- Retrieval is scoped to project-level context
-- The UI is designed like a research workspace, not a generic form app
-- The vault model makes it easy to extend toward graph memory, note linking, and richer knowledge navigation
-
-## Future Improvements
-
-- Better retrieval ranking and citation display
-- Richer Obsidian graph sync and backlink generation
-- Source filters inside chat
-- Team workspaces and shared vaults
-- Background indexing jobs for larger document sets
-
-## Screens / Use Cases
-
-ReszVault fits well for:
-
-- Research assistants
-- Students building study vaults
-- Resume and interview document review
-- Policy or legal document comparison
-- Technical reading across multiple PDFs
+For API routes, GitHub App setup, and repository retrieval details, see the [backend guide](backend/README.md).
 
 ## License
 
-This project is currently unlicensed for public reuse. Add a license before open-source distribution if needed.
+This project is currently unlicensed for public reuse.

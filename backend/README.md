@@ -1,60 +1,16 @@
 # ReszVault Backend
 
-Python/FastAPI API for ReszVault.
-
-It supports:
-
-- Cookie-based local sessions
-- Google OAuth when provider credentials are configured
-- PDF upload and indexing
-- SQLite persistence for local vaults
-- Source-grounded chat over the active vault
-- Server-sent event streaming for the frontend chat UI
-
-## Setup
-
-```bash
-cd backend
-python3 -m venv .venv
-. .venv/bin/activate
-pip install -r requirements.txt
-```
-
-Create a local `.env` from `.env.example` and set the required values,
-especially `FRONTEND_ORIGIN` and `GROQ_API_KEY` if you want LLM answers.
-
-For local Google sign-in, add this redirect URI in Google Console:
-
-```text
-http://localhost:3000/api/auth/google/callback
-```
-
-## Run
-
-The frontend Vite proxy expects the backend on port `3000`.
-
-```bash
-cd backend
-uvicorn main:app --host 0.0.0.0 --port 3000 --reload
-```
-
-## Endpoints
+Django REST Framework serves the PDF workspace, accounts, and GitHub research. Start the app and PostgreSQL with the [repository setup](../README.md#run-locally).
 
 | Method | Path | Purpose |
-|---|---|---|
-| `GET` | `/health` | Health check |
-| `GET` | `/books` | List indexed PDFs |
-| `POST` | `/books/upload` | Upload and index a PDF |
-| `DELETE` | `/books/:id` | Delete an indexed PDF |
-| `POST` | `/chat` | Non-streaming chat |
-| `POST` | `/chat/stream` | Streaming chat for the frontend |
-| `GET/POST` | `/api/auth/*` | Python auth/session routes |
-
-## Deployment
-
-The root `render.yaml` points Render at this FastAPI service.
-
-Set production environment variables in Render instead of committing secrets.
+| --- | --- | --- |
+| GET | `/health` | Check Django and the database schema |
+| GET | `/books` | List PDFs owned by the current account or guest |
+| POST | `/books/upload` | Upload and index a PDF |
+| GET, DELETE | `/books/<id>` | Retrieve or delete a PDF record |
+| POST | `/chat`, `/chat/stream` | Ask about selected PDFs and receive JSON or server-sent events |
+| GET, POST | `/api/auth/*` | Email sessions and OAuth sign-in |
+| GET, POST | `/api/github/*` | Check access, sync an index, and ask repository questions |
 
 ## GitHub sign-in and repository chat
 
@@ -66,7 +22,7 @@ the app should support repositories outside the app owner's account.
 
 Set the GitHub App callback URL to
 `https://reszvault.vercel.app/api/auth/github/callback` for production, or
-`http://localhost:5173/api/auth/github/callback` for local development. Copy the
+`http://localhost:5175/api/auth/github/callback` for local development. Copy the
 app's OAuth client ID, client secret, and URL slug into `GITHUB_CLIENT_ID`,
 `GITHUB_CLIENT_SECRET`, and `GITHUB_APP_SLUG` in the backend environment. Set
 `GITHUB_CALLBACK_ORIGIN` to the matching frontend origin. Configure the secret
@@ -106,10 +62,7 @@ comment, Pull request, Pull request review, Pull request review comment, and,
 if enabled, Discussion and Discussion comment. Signed events mark an index
 stale, and the next access rebuilds it using the user's GitHub authorization.
 
-SQLite keeps the index between requests. The current free Render filesystem
-can be reset by restarts or deploys. Mount a persistent disk and set
-`RESZVAULT_DATA_DIR` to its mount path for indexes that survive redeploys.
-Set this variable in the service environment before process startup.
+PostgreSQL stores repository snapshots across service restarts and redeploys.
 
 ### SWE-QA evaluation
 
