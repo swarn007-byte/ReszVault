@@ -32,7 +32,7 @@ function downloadMarkdown(filename: string, content: string) {
   URL.revokeObjectURL(url);
 }
 
-export function AppShell({ userId }: { userId?: string }) {
+export function AppShell({ userId, pdfWorkspace }: { userId?: string; pdfWorkspace: boolean }) {
   const navigate = useNavigate();
   const location = useLocation();
   const { id } = useParams<{ id?: string }>();
@@ -100,7 +100,7 @@ export function AppShell({ userId }: { userId?: string }) {
         }
       : null;
   const isGuestRoute = location.pathname.startsWith("/guest");
-  const chatBasePath = isGuestRoute ? "/guest" : "/app";
+  const chatBasePath = isGuestRoute ? "/guest" : pdfWorkspace ? "/app/pdfs" : "/app";
 
   useEffect(() => {
     setSidebarOpen(false);
@@ -130,9 +130,14 @@ export function AppShell({ userId }: { userId?: string }) {
   }, [id, chats, setActiveChat]);
 
   const selectedChat = id ? getChat(id) : undefined;
-  const activeChat = selectedChat?.repository && selectedChat.ownerId !== userId ? undefined : selectedChat;
+  const ownsChat = selectedChat?.ownerId === userId;
+  const activeChat = selectedChat && (selectedChat.repository
+    ? chatBasePath === "/app" && ownsChat
+    : ownsChat || (chatBasePath === "/app" && !selectedChat.ownerId))
+    ? selectedChat
+    : undefined;
   const repository = activeChat?.repository;
-  const chooseRepository = !isGuestRoute && !activeChat;
+  const chooseRepository = chatBasePath === "/app" && !activeChat;
   const startRepositoryChat = (name: string) => {
     const chatId = createChat(name, userId);
     navigate(`/app/${chatId}`);
@@ -194,9 +199,9 @@ export function AppShell({ userId }: { userId?: string }) {
 
   const handleSend = async (text: string) => {
     let chatId = activeChat?.id;
-    if (!chatId && !isGuestRoute) return;
+    if (chooseRepository) return;
     if (!chatId) {
-      chatId = createChat();
+      chatId = createChat(undefined, userId);
       navigate(`${chatBasePath}/${chatId}`, { replace: true });
     }
     addMessage(chatId, { role: "user", content: text });
@@ -295,7 +300,7 @@ export function AppShell({ userId }: { userId?: string }) {
       <div className="mx-auto flex h-full w-full overflow-hidden bg-[#f8f7f5]">
         {/* Desktop sidebar */}
         <div className="hidden md:flex">
-          <Sidebar activeChatId={activeChatId} repositoryMode={chooseRepository || !!repository} />
+          <Sidebar activeChatId={activeChatId} chatBasePath={chatBasePath} repositoryMode={chooseRepository || !!repository} />
         </div>
 
         {/* Mobile overlay */}
@@ -318,6 +323,7 @@ export function AppShell({ userId }: { userId?: string }) {
               >
                 <Sidebar
                   activeChatId={activeChatId}
+                  chatBasePath={chatBasePath}
                   repositoryMode={chooseRepository || !!repository}
                   onCloseMobile={() => setSidebarOpen(false)}
                 />

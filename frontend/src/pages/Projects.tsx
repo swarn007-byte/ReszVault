@@ -30,7 +30,7 @@ export function ProjectsPage() {
 
   const openProject = (id: string) => {
     selectProject(id);
-    navigate("/app", { replace: true });
+    navigate(isManagingProjects ? "/app/pdfs" : "/app", { replace: true });
   };
 
   const createVault = (input: { name: string; description?: string }) => {

@@ -56,7 +56,7 @@ npm run dev
 
 ## Walk through PDF Q&A
 
-1. Open the workspace and select **Continue as Guest**.
+1. Select **Continue as Guest**, or sign in and open **PDF Vault** from the GitHub chat sidebar.
 2. Upload [return-policy.pdf](frontend/e2e/fixtures/return-policy.pdf) from the sidebar.
 3. Ask **What is the return window?** The answer should include **30 days from delivery** and identify the return policy as its source.
 4. Open Django admin and inspect the **Books** and **Chunks** records.

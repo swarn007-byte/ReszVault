@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link, useLocation, useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../../hooks/useAuth";
 import { useChatStore } from "../../store/chatStore";
 import { useProjectStore } from "../../store/projectStore";
@@ -7,29 +7,28 @@ import { BookPicker } from "./BookPicker";
 
 type SidebarProps = {
   activeChatId: string | null;
+  chatBasePath: "/guest" | "/app" | "/app/pdfs";
   onCloseMobile?: () => void;
   repositoryMode?: boolean;
 };
 
-export function Sidebar({ activeChatId, onCloseMobile, repositoryMode = false }: SidebarProps) {
+export function Sidebar({ activeChatId, chatBasePath, onCloseMobile, repositoryMode = false }: SidebarProps) {
   const navigate = useNavigate();
-  const location = useLocation();
   const { user, logout } = useAuth();
   const [logoutError, setLogoutError] = useState("");
   const { chats, createChat, setActiveChat } = useChatStore();
   const activeProjectId = useProjectStore((state) => state.activeProjectId);
   const projects = useProjectStore((state) => state.projects);
   const createProject = useProjectStore((state) => state.createProject);
-  const isGuestRoute = location.pathname.startsWith("/guest");
-  const chatBasePath = isGuestRoute ? "/guest" : "/app";
-  const repositoryChats = isGuestRoute || !user ? [] : chats.filter(
-    (chat) => chat.repository && chat.ownerId === user.id,
+  const isGuestRoute = chatBasePath === "/guest";
+  const chatHistory = isGuestRoute || !user ? [] : chats.filter(
+    (chat) => Boolean(chat.repository) === repositoryMode && chat.ownerId === user.id,
   );
 
   const handleNewChat = () => {
     if (!isGuestRoute) {
       setActiveChat(null);
-      navigate("/app");
+      navigate(chatBasePath);
     } else {
       const id = createChat();
       navigate(`${chatBasePath}/${id}`);
@@ -88,6 +87,15 @@ export function Sidebar({ activeChatId, onCloseMobile, repositoryMode = false }:
             </svg>
             New Chat
           </button>
+          {!isGuestRoute && (
+            <Link
+              to={repositoryMode ? "/app/pdfs" : "/app"}
+              onClick={onCloseMobile}
+              className="mt-2 flex w-full justify-center rounded-lg border border-[#e8ddd0] bg-white px-4 py-2.5 text-sm font-medium text-[#2b2e36] transition hover:border-[#e8791a] hover:bg-[#fff7ef]"
+            >
+              {repositoryMode ? "PDF Vault" : "GitHub Chat"}
+            </Link>
+          )}
         </div>
 
         {!repositoryMode && (
@@ -107,10 +115,10 @@ export function Sidebar({ activeChatId, onCloseMobile, repositoryMode = false }:
             </svg>
             Project
           </button>}
-          {repositoryChats.length > 0 && (
-            <nav className="mt-4 grid gap-1" aria-label="Repository chats">
-              {repositoryChats.map((chat) => (
-                <Link key={chat.id} to={`/app/${chat.id}`} onClick={onCloseMobile}
+          {chatHistory.length > 0 && (
+            <nav className="mt-4 grid gap-1" aria-label={repositoryMode ? "Repository chats" : "PDF chats"}>
+              {chatHistory.map((chat) => (
+                <Link key={chat.id} to={`${chatBasePath}/${chat.id}`} onClick={onCloseMobile}
                   aria-current={activeChatId === chat.id ? "page" : undefined}
                   className="rounded-lg px-3 py-2 text-sm hover:bg-[#fbf3eb] aria-[current=page]:bg-[#fbf3eb]">
                   <span className="block truncate">{chat.title}</span>

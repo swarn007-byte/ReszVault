@@ -16,6 +16,8 @@ export default function App() {
         <Route path="/guest/:id" element={<ChatPage allowGuest />} />
         <Route path="/app" element={<ChatPage />} />
         <Route path="/app/:id" element={<ChatPage />} />
+        <Route path="/app/pdfs" element={<ChatPage pdfWorkspace />} />
+        <Route path="/app/pdfs/:id" element={<ChatPage pdfWorkspace />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
