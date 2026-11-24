@@ -54,5 +54,7 @@ DATABASES = {
 }
 
 REST_FRAMEWORK = {
+    # The loopback API serves sample data and does not use the Django admin session.
+    "DEFAULT_AUTHENTICATION_CLASSES": [],
     "DEFAULT_RENDERER_CLASSES": ["rest_framework.renderers.JSONRenderer"],
 }
