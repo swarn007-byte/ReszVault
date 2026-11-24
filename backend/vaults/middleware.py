@@ -4,6 +4,6 @@ class PrivateResponses:
 
     def __call__(self, request):
         response = self.get_response(request)
-        if request.path.startswith(("/api/auth/", "/api/github/", "/books", "/chat")):
+        if request.path.startswith(("/api/auth/", "/api/github/", "/api/projects", "/books", "/chat")):
             response["Cache-Control"] = "no-store"
         return response

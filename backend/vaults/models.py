@@ -1,3 +1,5 @@
+from uuid import uuid4
+
 from django.db import models
 from django.utils import timezone
 
@@ -57,9 +59,29 @@ class RepositoryIndex(models.Model):
     error = models.BooleanField(default=False)
 
 
+class Project(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
+    owner = models.ForeignKey(Account, on_delete=models.CASCADE, related_name="projects")
+    name = models.CharField(max_length=100)
+    description = models.CharField(max_length=300, blank=True)
+    created_at = models.DateTimeField(default=timezone.now)
+
+
+class ProjectRepository(models.Model):
+    project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="repositories")
+    name = models.CharField(max_length=200)
+    index_key = models.CharField(max_length=300)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["project", "index_key"], name="unique_project_repository"),
+        ]
+
+
 class Book(models.Model):
     id = models.CharField(primary_key=True, max_length=80)
     owner_key = models.CharField(max_length=110)
+    project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="books", null=True, blank=True)
     title = models.TextField()
     filename = models.TextField()
     status = models.CharField(max_length=20)

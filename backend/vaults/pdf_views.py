@@ -37,8 +37,8 @@ class BookQuestion(serializers.Serializer):
     useHybrid = serializers.BooleanField(default=True)
 
 
-def find_books(owner, ids=None):
-    books = Book.objects.filter(owner_key=owner).defer("pdf").order_by("-created_at")
+def find_books(owner, ids=None, *, project=None):
+    books = Book.objects.filter(owner_key=owner, project=project).defer("pdf").order_by("-created_at")
     return books if ids is None else books.filter(pk__in=ids)
 
 
@@ -74,6 +74,11 @@ def upload_book(request):
     owner = request_owner(request)
     if not owner:
         raise RequestError(400, "A vault session is required for upload.")
+    book = save_pdf(request, owner)
+    return Response({"success": True, "book": BookSerializer(book).data, "message": "PDF indexed."}, status=202)
+
+
+def save_pdf(request, owner, *, project=None):
     upload = request.FILES.get("file")
     if not upload or not upload.name.lower().endswith(".pdf"):
         raise RequestError(400, "Only PDF files are allowed.")
@@ -92,13 +97,13 @@ def upload_book(request):
     with transaction.atomic():
         book = Book.objects.create(
             id=f"book_{uuid4().hex}", owner_key=owner, title=title, filename=upload.name,
-            status="ready", chunk_count=len(passages), pdf=raw,
+            status="ready", chunk_count=len(passages), pdf=raw, project=project,
         )
         Chunk.objects.bulk_create([
             Chunk(id=f"chunk_{uuid4().hex}", book=book, content=passage.text, chunk_index=index, page=passage.page)
             for index, passage in enumerate(passages)
         ])
-    return Response({"success": True, "book": BookSerializer(book).data, "message": "PDF indexed."}, status=202)
+    return book
 
 
 @api_view(["GET", "DELETE"])

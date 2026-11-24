@@ -370,6 +370,8 @@ def synchronize_repository(request_github, token, repo, claim):
     use_baseline = not repo["private"] and baseline_enabled()
     try:
         def graphql(query, variables):
+            if not token:
+                return {}
             return request_github("/graphql", token, json_payload={"query": query, "variables": variables})
 
         files_token = None if repo.get("public_files") else token

@@ -2,7 +2,7 @@ from django.contrib import admin
 from django.urls import path
 
 import github_research as github
-from vaults import account_views as auth, pdf_views as pdf
+from vaults import account_views as auth, pdf_views as pdf, project_views as projects
 
 urlpatterns = [
     path("", pdf.root),
@@ -19,6 +19,11 @@ urlpatterns = [
     path("api/auth/github/start", github.start),
     path("api/auth/github/callback", github.callback),
     path("api/auth/<str:provider>/exchange", auth.exchange),
+    path("api/projects", projects.projects),
+    path("api/projects/<uuid:project_id>", projects.project_detail),
+    path("api/projects/<uuid:project_id>/pdfs", projects.project_pdf),
+    path("api/projects/<uuid:project_id>/repositories", projects.project_repository),
+    path("api/projects/<uuid:project_id>/chat", projects.project_chat),
     path("books", pdf.list_books),
     path("books/upload", pdf.upload_book),
     path("books/<str:book_id>", pdf.book_detail),

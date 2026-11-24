@@ -191,13 +191,13 @@ def callback_url():
     return f"{origin()}/api/auth/github/callback"
 
 
-def github_token(request):
+def github_token(request, *, required=True):
     session = GithubSession.objects.filter(
         session_id=request_token(request), session__expires_at__gt=timezone.now()
     ).first()
-    if not session:
+    if not session and required:
         raise RequestError(401, "Sign in with GitHub to start a repository chat.")
-    return session.access_token
+    return session.access_token if session else None
 
 
 def repository_info(name, token):
